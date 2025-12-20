@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # NocLense
 
 LogScrub is a modern, high-performance log analysis tool designed specifically for reviewing SIP and system logs. It provides a clean, dark-mode interface for visualizing large log files, with specialized features for telecommunications debugging.
@@ -46,3 +47,6 @@ npm install
 # Run development server
 npm run dev
 ```
+=======
+# NocLense
+>>>>>>> 8f97fb5814d0a6fc5f6312b53e1ff9298934a4b6
