@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
+import './styles/NocStyleSystem.css'
 import App from './App.tsx'
 import { loadServiceMappings } from './utils/messageCleanup'
 import { Analytics } from '@vercel/analytics/react'

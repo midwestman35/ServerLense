@@ -6,8 +6,9 @@
   font-weight: 400;
 
   color-scheme: dark;
-  background-color: #0f172a;
-  color: #f8fafc;
+  /* Using variables from NocStyleSystem.css */
+  background-color: var(--bg-primary, #0f172a);
+  color: var(--text-primary, #f8fafc);
 }
 
 body {
@@ -16,6 +17,7 @@ body {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  background: linear-gradient(135deg, var(--bg-gradient-start), var(--bg-gradient-end));
 }
 
 #root {
