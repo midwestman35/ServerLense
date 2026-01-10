@@ -105,17 +105,60 @@ const parseDatadogCSV = (text: string, fileColor: string, startId: number): LogE
     return parsedLogs;
 };
 
-export const parseLogFile = async (file: File, fileColor: string = '#3b82f6', startId: number = 1): Promise<LogEntry[]> => {
-    const text = await file.text();
+/**
+ * Read file in chunks to prevent memory exhaustion on large files
+ * Processes file incrementally and yields control to prevent tab freezing
+ */
+const readFileInChunks = async (file: File): Promise<string> => {
+    const CHUNK_SIZE = 1024 * 1024; // 1MB chunks
+    const fileSize = file.size;
+    let offset = 0;
+    let fullText = '';
+    let chunkCount = 0;
+    const YIELD_INTERVAL = 10; // Yield every 10 chunks to keep UI responsive
+
+    while (offset < fileSize) {
+        const chunk = file.slice(offset, Math.min(offset + CHUNK_SIZE, fileSize));
+        const chunkText = await chunk.text();
+        fullText += chunkText;
+        offset += CHUNK_SIZE;
+        chunkCount++;
+
+        // Yield control to browser periodically to prevent tab freezing
+        if (chunkCount % YIELD_INTERVAL === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+    }
+
+    return fullText;
+};
+
+export const parseLogFile = async (file: File, fileColor: string = '#3b82f6', startId: number = 1, onProgress?: (progress: number) => void): Promise<LogEntry[]> => {
+    // For files larger than 10MB, use chunked reading to prevent OOM
+    const useChunkedReading = file.size > 10 * 1024 * 1024;
+    
+    let text: string;
+    if (useChunkedReading) {
+        if (onProgress) onProgress(0.1);
+        text = await readFileInChunks(file);
+    } else {
+        text = await file.text();
+    }
 
     // Check if this is a CSV file
     const isCSV = file.name.toLowerCase().endsWith('.csv');
     if (isCSV) {
-        return parseDatadogCSV(text, fileColor, startId);
+        if (onProgress) onProgress(0.5);
+        const result = parseDatadogCSV(text, fileColor, startId);
+        if (onProgress) onProgress(1.0);
+        return result;
     }
 
     const lines = text.split(/\r?\n/);
     const parsedLogs: LogEntry[] = [];
+    
+    // Report progress after splitting lines
+    if (onProgress) onProgress(0.2);
 
     // Original format: [INFO] [12/17/2024, 09:18:05] [component]: message
     const logRegex1 = /^\[(INFO|DEBUG|ERROR|WARN)\]\s\[(\d{1,2}\/\d{1,2}\/\d{4}),\s(.*?)\]\s\[(.*?)\]:\s(.*)/;
@@ -125,8 +168,21 @@ export const parseLogFile = async (file: File, fileColor: string = '#3b82f6', st
 
     let currentLog: LogEntry | null = null;
     let idCounter = startId;
+    const YIELD_EVERY_N_LINES = 1000; // Yield control every 1000 lines to prevent tab freezing
 
-    for (let line of lines) {
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        
+        // Yield control periodically to prevent tab freezing during parsing of large files
+        if (i > 0 && i % YIELD_EVERY_N_LINES === 0) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+            // Update progress during parsing (20% to 90%)
+            if (onProgress) {
+                const parsingProgress = 0.2 + (i / lines.length) * 0.7;
+                onProgress(parsingProgress);
+            }
+        }
+        
         if (!line.trim()) continue; // Skip empty lines
 
         let match = line.match(logRegex1);
@@ -213,8 +269,14 @@ export const parseLogFile = async (file: File, fileColor: string = '#3b82f6', st
         parsedLogs.push(currentLog);
     }
 
+    // Report progress before sorting
+    if (onProgress) onProgress(0.95);
+
     // Sort logs by timestamp to ensure chronological order
     parsedLogs.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Report completion
+    if (onProgress) onProgress(1.0);
 
     return parsedLogs;
 };

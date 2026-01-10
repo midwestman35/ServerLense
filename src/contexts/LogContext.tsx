@@ -11,6 +11,8 @@ export interface CorrelationItem {
 interface LogContextType extends LogState {
     setLogs: (logs: LogEntry[]) => void;
     setLoading: (loading: boolean) => void;
+    parsingProgress: number; // Progress from 0 to 1
+    setParsingProgress: (progress: number) => void;
     setFilterText: (text: string) => void;
     isSipFilterEnabled: boolean;
     setIsSipFilterEnabled: (enabled: boolean) => void;
@@ -99,6 +101,7 @@ export const useLogContext = () => {
 export const LogProvider = ({ children }: { children: ReactNode }) => {
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [loading, setLoading] = useState(false);
+    const [parsingProgress, setParsingProgress] = useState<number>(0); // Progress from 0 to 1
     const [filterText, setFilterText] = useState('');
     const [isSipFilterEnabled, setIsSipFilterEnabled] = useState(false);
     const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
@@ -399,6 +402,8 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
         setLogs,
         loading,
         setLoading,
+        parsingProgress,
+        setParsingProgress,
         filterText,
         setFilterText,
         isSipFilterEnabled,
