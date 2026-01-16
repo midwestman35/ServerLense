@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useMemo, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useMemo, useEffect, useCallback, type ReactNode } from 'react';
 import type { LogEntry, LogState } from '../types';
 import { loadSearchHistory, addToSearchHistory as saveToHistory, clearSearchHistory as clearHistoryStorage } from '../store/searchHistory';
 
@@ -11,6 +11,8 @@ export interface CorrelationItem {
 interface LogContextType extends LogState {
     setLogs: (logs: LogEntry[]) => void;
     setLoading: (loading: boolean) => void;
+    parsingProgress: number; // Progress from 0 to 1
+    setParsingProgress: (progress: number) => void;
     setFilterText: (text: string) => void;
     isSipFilterEnabled: boolean;
     setIsSipFilterEnabled: (enabled: boolean) => void;
@@ -99,6 +101,7 @@ export const useLogContext = () => {
 export const LogProvider = ({ children }: { children: ReactNode }) => {
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [loading, setLoading] = useState(false);
+    const [parsingProgress, setParsingProgress] = useState<number>(0); // Progress from 0 to 1
     const [filterText, setFilterText] = useState('');
     const [isSipFilterEnabled, setIsSipFilterEnabled] = useState(false);
     const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
@@ -138,7 +141,8 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
     const [favoriteLogIds, setFavoriteLogIds] = useState<Set<number>>(new Set());
     const [isShowFavoritesOnly, setIsShowFavoritesOnly] = useState(false);
 
-    const toggleCorrelation = (item: CorrelationItem) => {
+    // Phase 2 Optimization: Wrap event handlers in useCallback to prevent unnecessary re-renders
+    const toggleCorrelation = useCallback((item: CorrelationItem) => {
         setActiveCorrelations(prev => {
             const exists = prev.some(i => i.type === item.type && i.value === item.value);
             if (exists) {
@@ -147,14 +151,14 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
                 return [...prev, item];
             }
         });
-    };
+    }, []);
 
-    const setOnlyCorrelation = (item: CorrelationItem) => {
+    const setOnlyCorrelation = useCallback((item: CorrelationItem) => {
         setActiveCorrelations([item]);
-    };
+    }, []);
 
     // Favorites Functions
-    const toggleFavorite = (logId: number) => {
+    const toggleFavorite = useCallback((logId: number) => {
         setFavoriteLogIds(prev => {
             const next = new Set(prev);
             if (next.has(logId)) {
@@ -164,7 +168,7 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
             }
             return next;
         });
-    };
+    }, []);
 
     // Load favorites from localStorage on mount
     useEffect(() => {
@@ -191,15 +195,6 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
         }
     }, [logs.length]);
 
-    // Filter Helper
-    const clearAllFilters = () => {
-        setFilterText('');
-        setIsSipFilterEnabled(false);
-        setSelectedComponentFilter(null);
-        setActiveCorrelations([]);
-        setSelectedLogId(null);
-        setIsShowFavoritesOnly(false);
-    };
 
     // Computed unique IDs and Counts for Sidebar
     const { correlationData, correlationCounts } = useMemo(() => {
@@ -286,26 +281,39 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
         };
     }, [logs, activeCorrelations]);
 
-    // Computed filtered logs
+    // Phase 2 Optimization: Pre-compute correlation indexes and lowercase filter text outside the filter loop
+    const correlationIndexes = useMemo(() => {
+        if (activeCorrelations.length === 0) return { inclusions: {}, exclusions: {} };
+        
+        const inclusions: Record<string, Set<string>> = {};
+        const exclusions: Record<string, Set<string>> = {};
+        
+        activeCorrelations.forEach(c => {
+            const target = c.excluded ? exclusions : inclusions;
+            if (!target[c.type]) target[c.type] = new Set();
+            target[c.type].add(c.value);
+        });
+        
+        return { inclusions, exclusions };
+    }, [activeCorrelations]);
+
+    // Phase 2 Optimization: Pre-compute lowercase filter text once
+    const lowerFilterText = useMemo(() => filterText.toLowerCase(), [filterText]);
+
+    // Computed filtered logs - Phase 2 Optimized
     const filteredLogs = useMemo(() => {
         if (!logs.length) return [];
+
+        const { inclusions, exclusions } = correlationIndexes;
+        const hasCorrelationFilters = Object.keys(inclusions).length > 0 || Object.keys(exclusions).length > 0;
 
         let result = logs.filter(log => {
             // If this is the selected log, always include it so the viewer can sync to it
             if (selectedLogId !== null && log.id === selectedLogId) return true;
 
             // Correlation Filter (Facetted Logic: AND between types, OR within type)
-            if (activeCorrelations.length > 0) {
-                // Group by inclusion/exclusion
-                const inclusions: Record<string, Set<string>> = {};
-                const exclusions: Record<string, Set<string>> = {};
-
-                activeCorrelations.forEach(c => {
-                    const target = c.excluded ? exclusions : inclusions;
-                    if (!target[c.type]) target[c.type] = new Set();
-                    target[c.type].add(c.value);
-                });
-
+            // Phase 2: Use pre-computed indexes instead of building them inside the loop
+            if (hasCorrelationFilters) {
                 // 1. Handle Inclusions (AND between types, OR within type)
                 for (const type in inclusions) {
                     const values = inclusions[type];
@@ -345,14 +353,14 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
             // SIP Filter (Show Only SIP)
             if (isSipFilterEnabled && !log.isSip) return false;
 
-            // Text Search Logic
-            if (filterText) {
-                const lowerFilter = filterText.toLowerCase();
+            // Phase 2 Optimization: Use pre-computed lowercase strings from parsing for O(1) string operations
+            // This eliminates toLowerCase() calls during filtering (major performance win for 100k+ logs)
+            if (lowerFilterText) {
                 const matchContent =
-                    log.message.toLowerCase().includes(lowerFilter) ||
-                    (log.payload && log.payload.toLowerCase().includes(lowerFilter)) ||
-                    log.component.toLowerCase().includes(lowerFilter) ||
-                    (log.callId && log.callId.toLowerCase().includes(lowerFilter));
+                    (log._messageLower && log._messageLower.includes(lowerFilterText)) ||
+                    (log._payloadLower && log._payloadLower.includes(lowerFilterText)) ||
+                    (log._componentLower && log._componentLower.includes(lowerFilterText)) ||
+                    (log._callIdLower && log._callIdLower.includes(lowerFilterText));
 
                 if (!matchContent) return false;
             }
@@ -382,23 +390,41 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
         });
 
         return result;
-    }, [logs, filterText, isSipFilterEnabled, selectedComponentFilter, sortConfig, activeCorrelations, isShowFavoritesOnly, favoriteLogIds]);
+    }, [logs, selectedLogId, correlationIndexes, selectedComponentFilter, isSipFilterEnabled, lowerFilterText, sortConfig, isShowFavoritesOnly, favoriteLogIds]);
 
-    const addToSearchHistory = (term: string) => {
+    // Phase 2 Optimization: Wrap event handlers in useCallback
+    const addToSearchHistory = useCallback((term: string) => {
         saveToHistory(term);
         setSearchHistory(loadSearchHistory());
-    };
+    }, []);
 
-    const clearSearchHistory = () => {
+    const clearSearchHistory = useCallback(() => {
         clearHistoryStorage();
         setSearchHistory([]);
-    };
+    }, []);
 
-    const value = {
+    // Phase 2 Optimization: Wrap clearAllFilters in useCallback
+    const clearAllFilters = useCallback(() => {
+        setFilterText('');
+        setIsSipFilterEnabled(false);
+        setSelectedComponentFilter(null);
+        setActiveCorrelations([]);
+        setSelectedLogId(null);
+        setIsShowFavoritesOnly(false);
+    }, []);
+
+    // Phase 2 Optimization: Memoize context value to prevent unnecessary re-renders
+    // This is critical - without memoization, the entire value object is recreated on every render
+    // causing all consuming components to re-render unnecessarily
+    // Note: Setters from useState are stable and don't need to be in dependencies
+    // Callbacks wrapped in useCallback are also stable
+    const value = useMemo(() => ({
         logs,
         setLogs,
         loading,
         setLoading,
+        parsingProgress,
+        setParsingProgress,
         filterText,
         setFilterText,
         isSipFilterEnabled,
@@ -452,7 +478,44 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
         toggleFavorite,
         isShowFavoritesOnly,
         setIsShowFavoritesOnly
-    };
+    }), [
+        // Only include values that actually change and affect consumers
+        logs,
+        loading,
+        parsingProgress,
+        filterText,
+        isSipFilterEnabled,
+        filteredLogs,
+        selectedLogId,
+        searchHistory,
+        isTextWrapEnabled,
+        sortConfig,
+        selectedComponentFilter,
+        visibleRange,
+        scrollTargetTimestamp,
+        timelineViewMode,
+        isTimelineCompact,
+        timelineZoomRange,
+        timelineEventFilters,
+        hoveredCallId,
+        hoveredCorrelation,
+        jumpState,
+        activeCorrelations,
+        correlationCounts,
+        isSidebarOpen,
+        isTimelineOpen,
+        activeCallFlowId,
+        correlationData,
+        favoriteLogIds,
+        isShowFavoritesOnly,
+        // Stable callbacks - included to satisfy exhaustive-deps but won't cause unnecessary recalculations
+        addToSearchHistory,
+        clearSearchHistory,
+        clearAllFilters,
+        toggleCorrelation,
+        setOnlyCorrelation,
+        toggleFavorite
+    ]);
 
     return (
         <LogContext.Provider value={value}>

@@ -5,7 +5,7 @@ import { Upload, AlertTriangle, X } from 'lucide-react';
 import { validateFile } from '../utils/fileUtils';
 
 const FileUploader = () => {
-    const { logs, setLogs, setLoading, setSelectedLogId } = useLogContext();
+    const { logs, setLogs, setLoading, setSelectedLogId, parsingProgress, setParsingProgress } = useLogContext();
     const [fileError, setFileError] = useState<string | null>(null);
     const [fileWarning, setFileWarning] = useState<string | null>(null);
 
@@ -39,19 +39,31 @@ const FileUploader = () => {
         }
 
         setLoading(true);
+        setParsingProgress(0);
         try {
             // Process all files
             const allParsedLogs = [];
-            let maxId = Math.max(0, ...logs.map(l => l.id)); // Get max ID from existing logs
+            // Fix: Use reduce instead of spread operator to prevent "Maximum call stack size exceeded" error with large datasets
+            let currentMaxId = logs.length > 0 ? logs.reduce((max, log) => Math.max(max, log.id), 0) : 0;
 
             const FILE_COLORS = ['#3b82f6', '#eab308', '#a855f7', '#ec4899', '#22c55e', '#f97316', '#06b6d4', '#64748b'];
 
             for (let i = 0; i < validationResults.length; i++) {
                 const { file } = validationResults[i];
                 const color = FILE_COLORS[i % FILE_COLORS.length];
-                const parsed = await parseLogFile(file, color, maxId);
+                // Use currentMaxId + 1 as startId for next file to ensure sequential IDs
+                const startId = currentMaxId + 1;
+                // Progress callback for this file (scaled by file index)
+                const fileProgressCallback = (progress: number) => {
+                    const fileProgress = (i / validationResults.length) + (progress / validationResults.length);
+                    setParsingProgress(fileProgress);
+                };
+                const parsed = await parseLogFile(file, color, startId, fileProgressCallback);
                 allParsedLogs.push(...parsed);
-                maxId = Math.max(maxId, ...parsed.map(l => l.id));
+                // Update currentMaxId to highest ID from parsed logs using reduce (safer for large arrays)
+                if (parsed.length > 0) {
+                    currentMaxId = parsed.reduce((max, log) => Math.max(max, log.id), currentMaxId);
+                }
             }
 
             // Merge with existing logs (append mode) and sort by timestamp
@@ -63,6 +75,7 @@ const FileUploader = () => {
             setFileError(`Failed to parse file${files.length > 1 ? 's' : ''}: ${err instanceof Error ? err.message : 'Unknown error'}`);
         } finally {
             setLoading(false);
+            setParsingProgress(0); // Reset progress when done
             if (fileWarning) {
                 setTimeout(() => setFileWarning(null), 5000);
             }
@@ -114,6 +127,22 @@ const FileUploader = () => {
                             </button>
                         </div>
                     )}
+                </div>
+            )}
+            
+            {/* Progress indicator */}
+            {parsingProgress > 0 && parsingProgress < 1 && (
+                <div className="w-full max-w-md mb-4 p-3 rounded-md border border-[var(--border-color)] bg-[var(--bg-light)]/50">
+                    <div className="flex items-center gap-2 mb-2">
+                        <div className="text-sm text-[var(--text-secondary)]">Parsing file...</div>
+                        <div className="text-sm font-medium text-[var(--accent-blue)]">{Math.round(parsingProgress * 100)}%</div>
+                    </div>
+                    <div className="w-full bg-[var(--border-color)] rounded-full h-2 overflow-hidden">
+                        <div
+                            className="h-full bg-[var(--accent-blue)] transition-all duration-300 ease-out"
+                            style={{ width: `${parsingProgress * 100}%` }}
+                        />
+                    </div>
                 </div>
             )}
             <div

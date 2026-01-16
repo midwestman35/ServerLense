@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useMemo } from 'react';
+import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useLogContext } from '../contexts/LogContext';
 import LogRow from './LogRow';
@@ -126,9 +126,31 @@ const LogViewer = () => {
         hoveredCorrelation
     } = useLogContext();
     const parentRef = useRef<HTMLDivElement>(null);
+    // Phase 2 Optimization: Debounce timeline updates to reduce re-renders
+    const visibleRangeTimeoutRef = useRef<number | null>(null);
+    const pendingRangeRef = useRef<{ start: number; end: number } | null>(null);
 
     // Dynamic row height estimation based on text wrap setting
     const estimateSize = () => isTextWrapEnabled ? 60 : 35;
+
+    // Phase 2 Optimization: Debounced update for visible range
+    const updateVisibleRange = useCallback((start: number, end: number) => {
+        pendingRangeRef.current = { start, end };
+        
+        // Clear existing timeout
+        if (visibleRangeTimeoutRef.current !== null) {
+            window.clearTimeout(visibleRangeTimeoutRef.current);
+        }
+        
+        // Debounce the update - only update after scrolling stops for 100ms
+        visibleRangeTimeoutRef.current = window.setTimeout(() => {
+            if (pendingRangeRef.current) {
+                setVisibleRange(pendingRangeRef.current);
+                pendingRangeRef.current = null;
+            }
+            visibleRangeTimeoutRef.current = null;
+        }, 100);
+    }, [setVisibleRange]);
 
     const rowVirtualizer = useVirtualizer({
         count: filteredLogs.length,
@@ -144,17 +166,27 @@ const LogViewer = () => {
             const endLog = filteredLogs[endIndex];
 
             if (startLog && endLog) {
+                // Phase 2 Optimization: Use debounced update instead of immediate setVisibleRange
                 // In Descending sort, startLog timestamp might be later than endLog
                 // We want visibleRange to be [minTS, maxTS] for TimelineScrubber
                 requestAnimationFrame(() => {
-                    setVisibleRange({
-                        start: Math.min(startLog.timestamp, endLog.timestamp),
-                        end: Math.max(startLog.timestamp, endLog.timestamp)
-                    });
+                    updateVisibleRange(
+                        Math.min(startLog.timestamp, endLog.timestamp),
+                        Math.max(startLog.timestamp, endLog.timestamp)
+                    );
                 });
             }
         }
     });
+
+    // Cleanup timeout on unmount
+    useEffect(() => {
+        return () => {
+            if (visibleRangeTimeoutRef.current !== null) {
+                window.clearTimeout(visibleRangeTimeoutRef.current);
+            }
+        };
+    }, []);
 
     // Scroll to selected log if initiated externally
     useEffect(() => {
