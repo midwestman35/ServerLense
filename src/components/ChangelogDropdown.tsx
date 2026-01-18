@@ -4,7 +4,7 @@ import { ChevronDown, X } from 'lucide-react';
 interface ChangelogEntry {
   version: string;
   date: string;
-  features: string[];
+  features?: string[];
   fixes?: string[];
   changes?: string[];
 }
