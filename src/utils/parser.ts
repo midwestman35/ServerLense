@@ -4,9 +4,10 @@ import { cleanupLogEntry } from './messageCleanup';
 /**
  * Log Parser for LogScrub
  * 
- * Supports two log formats:
+ * Supports multiple log formats:
  * 1. Original: [LEVEL] [MM/DD/YYYY, time] [component]: message
  * 2. ISO Date: [LEVEL] [YYYY-MM-DD HH:MM:SS,mmm] [component] message
+ * 3. Homer SIP Export: Text format with session metadata and SIP messages
  */
 
 /**
@@ -118,6 +119,133 @@ const parseDatadogCSV = (text: string, fileColor: string, startId: number): LogE
 };
 
 /**
+ * Parse Homer SIP capture export format
+ * Format: Session metadata followed by SIP messages delimited by "----- MESSAGE"
+ * Each message has: Timestamp, Direction, Protocol, Raw SIP content
+ */
+const parseHomerText = (text: string, fileColor: string, startId: number, fileName: string = 'homer-export'): LogEntry[] => {
+    const parsedLogs: LogEntry[] = [];
+    let idCounter = startId;
+
+    const lines = text.split(/\r?\n/);
+    let currentMessage: string[] = [];
+    let currentTimestamp: number | null = null;
+    let currentTimestampStr: string = '';
+    let currentDirection: string = '';
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Check if this is a proto: header line (starts new message)
+        // Format: proto:PROTOCOL TIMESTAMP SOURCE ---> DESTINATION
+        // Example: proto:TCP 2026-01-09T22:46:45.367125Z  10.20.137.235:14632 ---> 10.20.153.78:5070
+        const protoMatch = trimmed.match(/^proto:(\S+)\s+(\S+)\s+(\S+)\s*(--->|&lt;---)\s*(\S+)/i);
+        if (protoMatch) {
+            // If we have a previous message, process it
+            if (currentMessage.length > 0 && currentTimestamp !== null) {
+                const sipPayload = currentMessage.join('\n');
+                const firstLine = currentMessage[0] || '';
+                
+                // Create message summary from first line
+                let message = firstLine.length > 100 ? firstLine.substring(0, 100) + '...' : firstLine;
+                if (currentDirection) {
+                    message = `[${currentDirection}] ${message}`;
+                }
+
+                // Create log entry
+                const entry: LogEntry = {
+                    id: idCounter++,
+                    timestamp: currentTimestamp,
+                    rawTimestamp: currentTimestampStr,
+                    level: 'INFO' as LogLevel,
+                    component: 'Homer SIP',
+                    displayComponent: 'Homer SIP',
+                    message,
+                    displayMessage: message,
+                    payload: sipPayload,
+                    type: 'LOG',
+                    isSip: true,
+                    sipMethod: null,
+                    fileName: fileName,
+                    fileColor,
+                    _messageLower: message.toLowerCase(),
+                    _componentLower: 'homer sip'
+                };
+
+                // Process SIP payload to extract Call-ID, methods, etc.
+                processLogPayload(entry);
+
+                parsedLogs.push(entry);
+            }
+
+            // Start new message
+            const [, , timestampStr, source, directionArrow, destination] = protoMatch;
+            currentTimestampStr = timestampStr;
+            const parsedTimestamp = new Date(timestampStr).getTime();
+            currentTimestamp = !isNaN(parsedTimestamp) ? parsedTimestamp : null;
+            
+            // Determine direction from arrow
+            currentDirection = directionArrow === '--->' 
+                ? `${source} → ${destination}` 
+                : directionArrow === '&lt;---'
+                    ? `${destination} ← ${source}`
+                    : '';
+            
+            currentMessage = [];
+            continue;
+        }
+
+        // Collect SIP message lines (skip blank line after proto header, collect everything else until next proto:)
+        if (currentTimestamp !== null) {
+            // Skip the blank line immediately after proto header
+            if (currentMessage.length === 0 && !trimmed) {
+                continue;
+            }
+            // Collect all lines until we hit the next proto: header
+            if (trimmed || currentMessage.length > 0) {
+                currentMessage.push(line);
+            }
+        }
+    }
+
+    // Process the last message if file doesn't end with a proto: line
+    if (currentMessage.length > 0 && currentTimestamp !== null) {
+        const sipPayload = currentMessage.join('\n');
+        const firstLine = currentMessage[0] || '';
+        
+        let message = firstLine.length > 100 ? firstLine.substring(0, 100) + '...' : firstLine;
+        if (currentDirection) {
+            message = `[${currentDirection}] ${message}`;
+        }
+
+        const entry: LogEntry = {
+            id: idCounter++,
+            timestamp: currentTimestamp,
+            rawTimestamp: currentTimestampStr,
+            level: 'INFO' as LogLevel,
+            component: 'Homer SIP',
+            displayComponent: 'Homer SIP',
+            message,
+            displayMessage: message,
+            payload: sipPayload,
+            type: 'LOG',
+            isSip: true,
+            sipMethod: null,
+            fileName: fileName,
+            fileColor,
+            _messageLower: message.toLowerCase(),
+            _componentLower: 'homer sip'
+        };
+
+        processLogPayload(entry);
+        parsedLogs.push(entry);
+    }
+
+    return parsedLogs;
+};
+
+/**
  * Read file in chunks to prevent memory exhaustion on large files
  * Processes file incrementally and yields control to prevent tab freezing
  */
@@ -163,6 +291,17 @@ export const parseLogFile = async (file: File, fileColor: string = '#3b82f6', st
         if (onProgress) onProgress(0.5);
         const result = parseDatadogCSV(text, fileColor, startId);
         if (onProgress) onProgress(1.0);
+        return result;
+    }
+
+    // Check if this is a Homer SIP export (detect by proto: header line pattern)
+    const isHomer = text.match(/^proto:\S+\s+\S+\s+\S+\s*(--->|&lt;---)\s+\S+/im);
+    if (isHomer) {
+        if (onProgress) onProgress(0.5);
+        const result = parseHomerText(text, fileColor, startId, file.name);
+        if (onProgress) onProgress(1.0);
+        // Sort by timestamp for Homer exports
+        result.sort((a, b) => a.timestamp - b.timestamp);
         return result;
     }
 
