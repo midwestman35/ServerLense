@@ -12,6 +12,17 @@ interface ChangelogEntry {
 // Latest changelog entries - update this when new features are added
 const changelogEntries: ChangelogEntry[] = [
   {
+    version: '1.3.0',
+    date: '2025-01-18',
+    features: [
+      '📞 Homer SIP Export Support - Import and parse SIP call text files exported from Homer',
+      '🔍 Automatic Format Detection - Automatically detects Homer export format by proto: header pattern',
+      '⏰ Timestamp Extraction - Extracts accurate timestamps from Homer export headers',
+      '📡 SIP Message Parsing - Each SIP message parsed as separate log entry with full payload',
+      '🎯 Call-ID Extraction - Automatic extraction of Call-IDs and SIP methods from Homer logs'
+    ]
+  },
+  {
     version: '1.2.1',
     date: '2025-01-15',
     fixes: [
