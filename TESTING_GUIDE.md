@@ -1,317 +1,577 @@
-# Phase 1 Testing Guide
+# ServerLense API Testing Guide
 
-This guide helps you test the Phase 1 crash fixes to ensure they work correctly.
+## Overview
 
-## Quick Start
+This guide covers how to test all ServerLense API endpoints locally and in production.
 
-1. **Start the dev server** (already running in background)
-   ```bash
-   npm run dev
-   ```
+## Prerequisites
 
-2. **Open the application** in your browser (usually `http://localhost:5173`)
-
-3. **Test scenarios** below
+- ✅ Vercel CLI installed and logged in
+- ✅ Environment variables set in `.env.local`
+- ✅ Database schema initialized (`npm run init:db`)
+- ✅ Sample log files for testing
 
 ---
 
-## Test Scenarios
+## Local Testing Setup
 
-### ✅ Test 1: Small File Upload (< 1MB)
-**Purpose**: Verify basic functionality still works
-
-**Steps**:
-1. Upload a small log file (< 1MB)
-2. Verify file parses correctly
-3. Verify logs appear in the viewer
-4. Verify all features work (filtering, sorting, etc.)
-
-**Expected Result**: ✅ Works exactly as before
-
-**Status**: [ x] Pass [ ] Fail
-
----
-
-### ✅ Test 2: Spread Operator Fix (Large Existing Dataset)
-**Purpose**: Verify fix prevents "Maximum call stack size exceeded" error
-
-**Prerequisites**: 
-- A large test dataset has been generated: `test-large-dataset.log` (50,000 entries, 5.6 MB)
-- To generate a different size, run: `node scripts/generate-large-log.js [entries] [output-file]`
-  - Example: `node scripts/generate-large-log.js 100000 test-100k.log`
-
-**Steps**:
-1. **First upload**: Upload `test-large-dataset.log` to NocLense
-   - This will load 50,000 logs into memory
-   - Watch for any errors during parsing
-   - Verify all logs appear in the viewer
-2. **Second upload**: While the 50k logs are still loaded, upload another file (even a small one)
-   - This is the critical test - the spread operator issue occurs when calculating max ID from existing large dataset
-   - Watch the browser console (F12) carefully
-3. **Check for errors**: Look for "Maximum call stack size exceeded" in the console
-4. **Verify IDs**: Check that new logs have sequential IDs starting after the existing ones
-
-**Expected Result**: 
-- ✅ No "Maximum call stack size exceeded" error
-- ✅ File uploads successfully even with 50k+ existing logs
-- ✅ IDs are sequential (no conflicts)
-- ✅ Browser console shows no errors
-
-**Status**: [x] Pass [ ] Fail
-
-**Notes**: All tests passed successfully! Spread operator fix prevents crashes. Minor performance lag noticed with massive datasets - will be addressed in Phase 2 performance optimizations.
-
----
-
-### ✅ Test 3: Medium File Upload (10-50MB)
-**Purpose**: Verify normal file reading still works for medium files
-
-**Steps**:
-1. Upload a medium-sized log file (10-50MB)
-2. Observe the parsing process
-3. Check browser console for errors
-4. Verify memory usage (Chrome DevTools > Performance > Memory)
-
-**Expected Result**:
-- ✅ File parses successfully
-- ✅ Progress bar appears and updates
-- ✅ UI stays responsive
-- ✅ No OOM errors
-
-**Status**: [ ] Pass [ ] Fail
-
-**Notes**: 
-
----
-
-### ✅ Test 4: Large File Upload (100MB+)
-**Purpose**: Verify chunked reading prevents OOM crashes
-
-**Steps**:
-1. Upload a large log file (100MB+)
-2. Watch for:
-   - Progress bar appears
-   - Progress updates smoothly (0% → 100%)
-   - UI remains responsive (can interact with page)
-   - No "Page Unresponsive" warnings
-   - Browser doesn't kill the tab
-
-**Expected Result**:
-- ✅ Chunked reading activates (files >10MB)
-- ✅ Progress bar shows percentage
-- ✅ UI stays responsive throughout
-- ✅ File parses successfully
-- ✅ No Chrome crashes or tab kills
-- ✅ Memory usage stays reasonable
-
-**Status**: [ ] Pass [ ] Fail
-
-**Notes**: 
-
----
-
-### ✅ Test 5: Progress Indicators
-**Purpose**: Verify progress reporting works correctly
-
-**Steps**:
-1. Upload a file large enough to trigger chunked reading (>10MB)
-2. Observe the progress bar:
-   - Does it appear?
-   - Does it show percentage?
-   - Does it update smoothly?
-   - Does it disappear when done?
-3. Try uploading multiple files - does progress work for each?
-
-**Expected Result**:
-- ✅ Progress bar appears during parsing
-- ✅ Shows correct percentage (0-100%)
-- ✅ Updates smoothly
-- ✅ Disappears when parsing completes
-- ✅ Works for multiple files
-
-**Status**: [ ] Pass [ ] Fail
-
-**Notes**: 
-
----
-
-### ✅ Test 6: UI Responsiveness
-**Purpose**: Verify periodic yields prevent tab freezing
-
-**Steps**:
-1. Upload a large file (100MB+)
-2. During parsing, try to:
-   - Scroll the page
-   - Click buttons
-   - Type in filter box
-   - Open browser DevTools
-3. Check if browser shows "Page Unresponsive" warning
-
-**Expected Result**:
-- ✅ Can interact with UI during parsing
-- ✅ Can scroll, click, type
-- ✅ No "Page Unresponsive" warnings
-- ✅ Browser doesn't kill the tab
-
-**Status**: [ ] Pass [ ] Fail
-
-**Notes**: 
-
----
-
-### ✅ Test 7: Multiple File Upload
-**Purpose**: Verify fixes work with multiple files
-
-**Steps**:
-1. Select multiple files at once (small, medium, large mix)
-2. Upload them together
-3. Verify:
-   - Each file processes correctly
-   - Progress updates for each file
-   - IDs are sequential across files
-   - No crashes
-
-**Expected Result**:
-- ✅ All files parse successfully
-- ✅ Progress updates correctly for each file
-- ✅ IDs are sequential (no conflicts)
-- ✅ No crashes
-
-**Status**: [ ] Pass [ ] Fail
-
-**Notes**: 
-
----
-
-### ✅ Test 8: Edge Cases
-**Purpose**: Verify edge cases don't break the fixes
-
-**Test Cases**:
-1. **Empty file**: Upload an empty file
-2. **Invalid file**: Upload an invalid file format
-3. **Very large file**: Upload a 500MB+ file (if available)
-4. **Cancel during upload**: Try canceling during parsing (if possible)
-5. **Multiple rapid uploads**: Upload files in quick succession
-
-**Expected Result**:
-- ✅ Handles edge cases gracefully
-- ✅ Shows appropriate error messages
-- ✅ Doesn't crash on invalid inputs
-
-**Status**: [ ] Pass [ ] Fail
-
-**Notes**: 
-
----
-
-## Performance Metrics to Check
-
-### Memory Usage
-**Before Phase 1**: Large files could use 500MB+ memory, causing crashes
-
-**After Phase 1** (Expected):
-- Small files (< 10MB): ~50-100MB
-- Medium files (10-50MB): ~100-200MB
-- Large files (100MB+): ~200-300MB (constant, not scaling with file size)
-
-**How to Check**:
-1. Open Chrome DevTools (F12)
-2. Go to Performance tab
-3. Click Record
-4. Upload a file
-5. Stop recording
-6. Check Memory usage graph
-
-**Result**: [ ] Memory usage reasonable [ ] Memory usage too high
-
----
-
-### Parsing Time
-**Check**: Does chunked reading add significant overhead?
-
-**Before Phase 1**: Fast but crashes on large files
-**After Phase 1** (Expected): Slightly slower due to yields, but stable
-
-**Result**: [ ] Acceptable performance [ ] Too slow
-
----
-
-## Browser Console Checks
-
-### ✅ No Errors
-**Check**: Open browser console (F12) and watch for:
-- ❌ "Maximum call stack size exceeded"
-- ❌ "Out of Memory"
-- ❌ "Page Unresponsive"
-- ❌ Any uncaught exceptions
-
-**Result**: [ ] No errors [ ] Errors found:
-
----
-
-## Known Limitations
-
-1. **Chunked reading threshold**: Only activates for files >10MB
-   - Smaller files use normal reading (acceptable for performance)
-
-2. **Progress granularity**: Progress updates every 1000 lines
-   - May appear less smooth for very large files (acceptable trade-off)
-
-3. **Memory still required**: Still loads entire file into memory after chunking
-   - True streaming would require Phase 3 (Web Workers)
-   - Current solution prevents crashes while maintaining compatibility
-
----
-
-## Test Results Summary
-
-| Test | Status | Notes |
-|------|--------|-------|
-| Test 1: Small Files | ✅ Pass | Works exactly as before |
-| Test 2: Spread Operator Fix | ✅ Pass | No crashes with 50k+ logs |
-| Test 3: Medium Files | ✅ Pass | Normal operation |
-| Test 4: Large Files | ✅ Pass | Chunked reading works |
-| Test 5: Progress Indicators | ✅ Pass | Progress bar displays correctly |
-| Test 6: UI Responsiveness | ⚠️ Pass | Some lag with massive files - Phase 2 will optimize |
-| Test 7: Multiple Files | ✅ Pass | Multiple file handling works |
-| Test 8: Edge Cases | ✅ Pass | Edge cases handled |
-
-**Overall Status**: ✅ **Ready for Phase 2** - All critical fixes verified
-
-**Issues Found**:
-1. ⚠️ Minor performance lag with massive log files (100k+ entries) - UI slows down between input. This is expected and will be addressed in Phase 2 performance optimizations (memoization, filtering optimizations).
-
-**Phase 1 Summary**: 
-- ✅ Crash fixes working correctly
-- ✅ No "Maximum call stack size exceeded" errors
-- ✅ No OOM crashes on large files
-- ✅ Progress indicators functional
-- ✅ Chunked reading prevents tab freezing
-- ⚠️ Performance optimization needed for massive datasets (Phase 2)
-
----
-
-## Rollback if Needed
-
-If critical issues are found, rollback using:
+### 1. Start Vercel Dev Server
 
 ```bash
-git revert HEAD
-# or
-git checkout main -- src/components/FileUploader.tsx src/utils/parser.ts src/contexts/LogContext.tsx
+cd C:\Users\EnriqueV\Documents\ServerLense
+vercel dev
 ```
 
-See `REFACTOR_CHANGELOG.md` for detailed rollback instructions.
+This will:
+- Start a local development server (usually on `http://localhost:3000`)
+- Use your `.env.local` environment variables
+- Hot-reload on code changes
+- Simulate Vercel serverless functions
+
+### 2. Verify Environment Variables
+
+```bash
+# Test database connection
+npm run test:db
+```
+
+Expected output:
+```
+✅ Database connected successfully!
+✅ Logs table exists
+Current log entries: 0
+```
+
+---
+
+## Testing Individual Endpoints
+
+### 1. Health Check Endpoint
+
+**Test the health endpoint:**
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+**Expected Response:**
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-01-20T18:30:00.000Z",
+  "database": {
+    "connected": true,
+    "current_time": "2026-01-20T18:30:00.000Z",
+    "log_count": 0
+  }
+}
+```
+
+---
+
+### 2. Parse Endpoint (File Upload)
+
+**Using curl:**
+
+```bash
+curl -X POST http://localhost:3000/api/parse \
+  -F "file=@path/to/your/logfile.txt"
+```
+
+**Using PowerShell:**
+
+```powershell
+$filePath = "C:\path\to\your\logfile.txt"
+$uri = "http://localhost:3000/api/parse"
+
+$form = @{
+    file = Get-Item -Path $filePath
+}
+
+Invoke-RestMethod -Uri $uri -Method Post -Form $form
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "count": 12345,
+  "fileName": "logfile.txt"
+}
+```
+
+**Test with different file types:**
+
+```bash
+# Standard log file
+curl -X POST http://localhost:3000/api/parse -F "file=@sample.log"
+
+# CSV file (Datadog format)
+curl -X POST http://localhost:3000/api/parse -F "file=@sample.csv"
+
+# Homer SIP export
+curl -X POST http://localhost:3000/api/parse -F "file=@homer-export.txt"
+```
+
+---
+
+### 3. Query Logs Endpoint
+
+**Basic query:**
+
+```bash
+curl "http://localhost:3000/api/logs?limit=10&offset=0"
+```
+
+**With filters:**
+
+```bash
+# Filter by component
+curl "http://localhost:3000/api/logs?component=ReportProcessor&limit=10"
+
+# Filter by call ID
+curl "http://localhost:3000/api/logs?callId=abc123&limit=10"
+
+# Filter by file name
+curl "http://localhost:3000/api/logs?fileName=sample.log&limit=10"
+
+# Filter by level
+curl "http://localhost:3000/api/logs?level=ERROR&limit=10"
+
+# Filter by SIP logs only
+curl "http://localhost:3000/api/logs?isSip=true&limit=10"
+
+# Time range filter
+curl "http://localhost:3000/api/logs?startTime=1704067200000&endTime=1704153600000&limit=10"
+
+# Full-text search
+curl "http://localhost:3000/api/logs?search=timeout&limit=10"
+
+# Combined filters
+curl "http://localhost:3000/api/logs?component=ReportProcessor&level=ERROR&limit=10&offset=0"
+```
+
+**Expected Response:**
+```json
+{
+  "logs": [
+    {
+      "id": 1,
+      "timestamp": 1704067200000,
+      "rawTimestamp": "01/01/2024, 12:00:00 AM",
+      "level": "ERROR",
+      "component": "ReportProcessor",
+      "displayComponent": "ReportProcessor",
+      "message": "Failed to process report",
+      "displayMessage": "Failed to process report",
+      "payload": "",
+      "type": "LOG",
+      "isSip": false,
+      "sipMethod": null,
+      "fileName": "sample.log",
+      "fileColor": "#3b82f6",
+      "callId": null,
+      "reportId": null,
+      "operatorId": null,
+      "extensionId": null,
+      "stationId": null
+    }
+  ],
+  "total": 12345,
+  "offset": 0,
+  "limit": 10
+}
+```
+
+---
+
+### 4. Correlation Counts Endpoint
+
+**Get file counts:**
+
+```bash
+curl "http://localhost:3000/api/counts?type=file"
+```
+
+**Get call ID counts:**
+
+```bash
+curl "http://localhost:3000/api/counts?type=callId"
+```
+
+**Get report counts:**
+
+```bash
+curl "http://localhost:3000/api/counts?type=report"
+```
+
+**Get operator counts:**
+
+```bash
+curl "http://localhost:3000/api/counts?type=operator"
+```
+
+**Get extension counts:**
+
+```bash
+curl "http://localhost:3000/api/counts?type=extension"
+```
+
+**Get station counts:**
+
+```bash
+curl "http://localhost:3000/api/counts?type=station"
+```
+
+**Expected Response:**
+```json
+{
+  "counts": [
+    { "value": "sample.log", "count": 5000 },
+    { "value": "another.log", "count": 3000 }
+  ]
+}
+```
+
+---
+
+### 5. Timeline Endpoint
+
+**Get timeline data:**
+
+```bash
+curl "http://localhost:3000/api/timeline?startTime=1704067200000&endTime=1704153600000"
+```
+
+**With file filter:**
+
+```bash
+curl "http://localhost:3000/api/timeline?startTime=1704067200000&endTime=1704153600000&fileName=sample.log"
+```
+
+**With custom bucket size (60 seconds):**
+
+```bash
+curl "http://localhost:3000/api/timeline?startTime=1704067200000&endTime=1704153600000&bucketSize=60"
+```
+
+**Expected Response:**
+```json
+{
+  "timeline": [
+    {
+      "timeBucket": 1704067200000,
+      "errorCount": 5,
+      "sipRequestCount": 10,
+      "sipSuccessCount": 8,
+      "sipErrorCount": 2
+    },
+    {
+      "timeBucket": 1704067260000,
+      "errorCount": 3,
+      "sipRequestCount": 15,
+      "sipSuccessCount": 12,
+      "sipErrorCount": 3
+    }
+  ]
+}
+```
+
+---
+
+### 6. Clear Endpoint
+
+**Clear all logs and blobs:**
+
+```bash
+curl -X POST http://localhost:3000/api/clear
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "deletedLogs": 12345,
+  "deletedBlobs": 2
+}
+```
+
+**⚠️ Warning:** This deletes ALL logs and temporary blob files!
+
+---
+
+## Automated Testing Scripts
+
+### Test Script 1: Basic Flow Test
+
+Create `scripts/test-api.ts`:
+
+```typescript
+import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+dotenv.config({ path: join(__dirname, '..', '.env.local') });
+
+const API_BASE = process.env.API_BASE || 'http://localhost:3000';
+
+async function testHealth() {
+    console.log('Testing health endpoint...');
+    const response = await fetch(`${API_BASE}/api/health`);
+    const data = await response.json();
+    console.log('✅ Health check:', data);
+    return data;
+}
+
+async function testParse(filePath: string) {
+    console.log(`Testing parse endpoint with ${filePath}...`);
+    // Note: This requires FormData, which is complex in Node.js
+    // Use curl or Postman for file uploads
+    console.log('⚠️  Use curl or Postman for file upload testing');
+}
+
+async function testLogs() {
+    console.log('Testing logs endpoint...');
+    const response = await fetch(`${API_BASE}/api/logs?limit=5`);
+    const data = await response.json();
+    console.log('✅ Logs query:', {
+        total: data.total,
+        returned: data.logs.length,
+        firstLog: data.logs[0]?.message?.substring(0, 50)
+    });
+    return data;
+}
+
+async function testCounts() {
+    console.log('Testing counts endpoint...');
+    const response = await fetch(`${API_BASE}/api/counts?type=file`);
+    const data = await response.json();
+    console.log('✅ File counts:', data.counts.length, 'files');
+    return data;
+}
+
+async function testTimeline() {
+    console.log('Testing timeline endpoint...');
+    const now = Date.now();
+    const oneHourAgo = now - (60 * 60 * 1000);
+    const response = await fetch(
+        `${API_BASE}/api/timeline?startTime=${oneHourAgo}&endTime=${now}`
+    );
+    const data = await response.json();
+    console.log('✅ Timeline:', data.timeline.length, 'buckets');
+    return data;
+}
+
+async function runTests() {
+    try {
+        await testHealth();
+        await testLogs();
+        await testCounts();
+        await testTimeline();
+        console.log('\n✅ All tests passed!');
+    } catch (error: any) {
+        console.error('❌ Test failed:', error.message);
+        process.exit(1);
+    }
+}
+
+runTests();
+```
+
+---
+
+## Testing with Postman
+
+### Import Collection
+
+1. **Create a new Postman collection** named "ServerLense API"
+
+2. **Add requests:**
+
+   - **Health Check**
+     - Method: GET
+     - URL: `http://localhost:3000/api/health`
+
+   - **Parse File**
+     - Method: POST
+     - URL: `http://localhost:3000/api/parse`
+     - Body: form-data
+     - Key: `file` (type: File)
+     - Value: Select a log file
+
+   - **Query Logs**
+     - Method: GET
+     - URL: `http://localhost:3000/api/logs`
+     - Params:
+       - `limit`: 10
+       - `offset`: 0
+       - `component`: (optional)
+       - `level`: (optional)
+
+   - **Get Counts**
+     - Method: GET
+     - URL: `http://localhost:3000/api/counts`
+     - Params:
+       - `type`: file
+
+   - **Get Timeline**
+     - Method: GET
+     - URL: `http://localhost:3000/api/timeline`
+     - Params:
+       - `startTime`: 1704067200000
+       - `endTime`: 1704153600000
+
+   - **Clear All**
+     - Method: POST
+     - URL: `http://localhost:3000/api/clear`
+
+---
+
+## Testing Workflow
+
+### Complete End-to-End Test
+
+1. **Start dev server:**
+   ```bash
+   vercel dev
+   ```
+
+2. **Verify health:**
+   ```bash
+   curl http://localhost:3000/api/health
+   ```
+
+3. **Upload a test file:**
+   ```bash
+   curl -X POST http://localhost:3000/api/parse -F "file=@test/sample.log"
+   ```
+
+4. **Query logs:**
+   ```bash
+   curl "http://localhost:3000/api/logs?limit=10"
+   ```
+
+5. **Get counts:**
+   ```bash
+   curl "http://localhost:3000/api/counts?type=file"
+   ```
+
+6. **Get timeline:**
+   ```bash
+   curl "http://localhost:3000/api/timeline?startTime=0&endTime=$(date +%s)000"
+   ```
+
+7. **Clear (optional):**
+   ```bash
+   curl -X POST http://localhost:3000/api/clear
+   ```
+
+---
+
+## Testing Large Files
+
+### Test with 100MB+ File
+
+```bash
+# Create a large test file (if needed)
+# Note: This is just an example - use your actual log files
+
+# Upload large file
+curl -X POST http://localhost:3000/api/parse \
+  -F "file=@large-file.log" \
+  --max-time 120
+```
+
+**Monitor progress:**
+- Check Vercel dev server logs
+- Watch for memory usage
+- Verify blob cleanup after parsing
+
+---
+
+## Production Testing
+
+### Deploy to Vercel Preview
+
+```bash
+# Deploy to preview
+vercel
+
+# Get preview URL (e.g., https://serverlense-xxx.vercel.app)
+# Test endpoints using preview URL instead of localhost:3000
+```
+
+### Test Production Endpoints
+
+Replace `localhost:3000` with your Vercel deployment URL:
+
+```bash
+curl https://your-project.vercel.app/api/health
+curl -X POST https://your-project.vercel.app/api/parse -F "file=@sample.log"
+```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+1. **"POSTGRES_URL environment variable is not set"**
+   - Solution: Check `.env.local` file exists and has `POSTGRES_URL`
+   - Run: `npm run test:db` to verify
+
+2. **"Failed to fetch blob"**
+   - Solution: Check blob URL is accessible
+   - Verify `BLOB_READ_WRITE_TOKEN` is set
+
+3. **"No logs found in file"**
+   - Solution: Check file format matches supported formats
+   - Verify file is not empty
+
+4. **Database connection errors**
+   - Solution: Run `npm run init:db` to initialize schema
+   - Check Neon dashboard for connection issues
+
+5. **Function timeout**
+   - Solution: Large files may exceed 60s timeout
+   - Consider chunked upload for very large files
+
+---
+
+## Performance Testing
+
+### Load Test with Apache Bench
+
+```bash
+# Install Apache Bench (if not installed)
+# Windows: Download from Apache website
+# Mac: brew install httpd
+# Linux: apt-get install apache2-utils
+
+# Test query endpoint
+ab -n 100 -c 10 http://localhost:3000/api/logs?limit=10
+
+# Test counts endpoint
+ab -n 100 -c 10 http://localhost:3000/api/counts?type=file
+```
+
+### Monitor Performance
+
+- Check response times
+- Monitor database query performance
+- Watch for memory leaks
+- Verify blob cleanup
 
 ---
 
 ## Next Steps
 
-If all tests pass:
-- ✅ Proceed to Phase 2: Performance Refactoring
-- ✅ Focus on memoization and filtering optimizations
-
-If issues found:
-- ❌ Document issues in this file
-- ❌ Fix issues before proceeding
-- ❌ Consider rollback if critical
+After testing:
+1. ✅ Verify all endpoints work correctly
+2. ✅ Test with various file formats
+3. ✅ Test error handling
+4. ✅ Verify blob cleanup
+5. ✅ Check database performance
+6. ✅ Proceed to Phase 2 (Frontend Integration)

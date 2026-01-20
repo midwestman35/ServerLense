@@ -12,7 +12,8 @@
     "test": "jest",
     "lint": "eslint .",
     "test:db": "tsx scripts/test-db.ts",
-    "init:db": "tsx scripts/init-db.ts"
+    "init:db": "tsx scripts/init-db.ts",
+    "test:api": "tsx scripts/test-api.ts"
   },
   "dependencies": {
     "express": "^4.18.2",
