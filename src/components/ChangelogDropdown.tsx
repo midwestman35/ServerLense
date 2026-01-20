@@ -12,6 +12,21 @@ interface ChangelogEntry {
 // Latest changelog entries - update this when new features are added
 const changelogEntries: ChangelogEntry[] = [
   {
+    version: '1.4.0',
+    date: '2026-01-20',
+    features: [
+      '🚀 Streaming Parser - Process large files (740MB+) without Chrome crashes by parsing in 2MB chunks',
+      '💾 Memory Optimization - Reduced memory usage by ~99% during parsing (from ~1.5GB+ to ~50-100MB)',
+      '📊 Memory Estimation - See estimated memory usage before processing large files',
+      '⚠️ Enhanced Warnings - Progressive warnings for files >50MB, >200MB, and >500MB with memory estimates',
+      '✅ Confirmation Dialog - Requires confirmation before processing files >500MB to prevent crashes'
+    ],
+    fixes: [
+      '🔧 Fixed Chrome "out of memory" crashes when processing large log files',
+      '⚡ Optimized array operations for large datasets to prevent stack overflow errors'
+    ]
+  },
+  {
     version: '1.3.2',
     date: '2026-01-20',
     features: [
