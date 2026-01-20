@@ -9,8 +9,8 @@ import CorrelationSidebar from './components/CorrelationSidebar';
 import ExportModal from './components/export/ExportModal';
 import ChangelogDropdown from './components/ChangelogDropdown';
 import { Download, FolderOpen, X, AlertTriangle, Filter, Moon, Sun, Flame, LocateFixed, ArrowLeft } from 'lucide-react';
-import { parseLogFile } from './utils/parser';
 import { validateFile } from './utils/fileUtils';
+import { uploadLogFile } from './api/client';
 import { format } from 'date-fns';
 import clsx from 'clsx';
 
@@ -36,7 +36,8 @@ const MainLayout = () => {
     setJumpState,
     setScrollTargetTimestamp,
     filterText,
-    clearAllData
+    clearAllData,
+    refreshLogs
   } = useLogContext();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,26 +93,26 @@ const MainLayout = () => {
     }
 
     setLoading(true);
-    setLogs([]);
     setSelectedLogId(null);
     setActiveCallFlowId(null);
 
     try {
-      const allLogs = [];
+      // Upload files via API
       for (const { file } of validationResults) {
-        const parsed = await parseLogFile(file, '#3b82f6', 1, undefined, false); // Use traditional parsing for App.tsx
-        if (Array.isArray(parsed)) {
-          allLogs.push(...parsed);
+        try {
+          await uploadLogFile(file);
+        } catch (err) {
+          console.error(`Failed to upload ${file.name}:`, err);
+          setFileError(`Failed to upload ${file.name}: ${err instanceof Error ? err.message : 'Unknown error'}`);
         }
-        // If IndexedDB was used, logs are already stored, skip adding to array
       }
-
-      // Sort combined logs by timestamp
-      allLogs.sort((a, b) => a.timestamp - b.timestamp);
-
-      setLogs(allLogs);
+      
+      // Refresh logs from API after upload
+      if (refreshLogs) {
+        await refreshLogs();
+      }
     } catch (err) {
-      setFileError('Failed to parse log file. Please check the format.');
+      setFileError('Failed to upload log file. Please check the format and try again.');
       console.error(err);
     } finally {
       setLoading(false);
@@ -121,11 +122,9 @@ const MainLayout = () => {
   };
 
   const handleClearLogs = async () => {
-    // Use clearAllData to clear both in-memory and IndexedDB data
+    // Use clearAllData to clear all logs via API
     if (clearAllData) {
       await clearAllData();
-    } else {
-      setLogs([]);
     }
     setSelectedLogId(null);
     setActiveCallFlowId(null);

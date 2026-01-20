@@ -71,7 +71,9 @@ const LogRow: React.FC<LogRowProps> = ({ log, style, onClick, active, measureRef
 
                 {/* 2. Timestamp (160px) */}
                 <div className="text-slate-500 truncate">
-                    {format(new Date(log.timestamp), 'MM/dd HH:mm:ss.SSS')}
+                    {log.timestamp && typeof log.timestamp === 'number' && !isNaN(log.timestamp) && isFinite(log.timestamp) && log.timestamp > 0
+                        ? format(new Date(log.timestamp), 'MM/dd HH:mm:ss.SSS')
+                        : '--/-- --:--:--.---'}
                 </div>
 
                 {/* 3. Level (24px) */}

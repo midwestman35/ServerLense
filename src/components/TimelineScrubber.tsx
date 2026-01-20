@@ -47,27 +47,52 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
             limitedLogs = sourceLogsRaw.filter((_, idx) => idx % step === 0).slice(0, MAX_TIMELINE_EVENTS);
         }
         
+        // Filter out logs with invalid timestamps first
+        const validLogs = limitedLogs.filter(log => 
+            log.timestamp && 
+            typeof log.timestamp === 'number' && 
+            !isNaN(log.timestamp) && 
+            isFinite(log.timestamp) &&
+            log.timestamp > 0
+        );
+        
+        if (!validLogs.length) return [];
+        
         // filteredLogs is already sorted, so only sort for 'full' mode or if timestamps aren't already sorted
         if (timelineViewMode === 'filtered') {
             // filteredLogs should already be sorted, so we can use it directly
-            return limitedLogs;
+            return validLogs;
         }
+        
         // For 'full' mode, check if already sorted, otherwise sort
-        const needsSort = limitedLogs.length > 1 && limitedLogs.some((log, idx) => 
-            idx > 0 && limitedLogs[idx - 1].timestamp > log.timestamp
+        const needsSort = validLogs.length > 1 && validLogs.some((log, idx) => 
+            idx > 0 && validLogs[idx - 1].timestamp > log.timestamp
         );
-        return needsSort ? [...limitedLogs].sort((a, b) => a.timestamp - b.timestamp) : limitedLogs;
+        return needsSort ? [...validLogs].sort((a, b) => a.timestamp - b.timestamp) : validLogs;
     }, [sourceLogsRaw, timelineViewMode]);
 
     const { minTime, duration, relevantLogs, fileSegments, callSegments, gaps, maxLanes } = useMemo(() => {
         if (!sourceLogs.length) return { minTime: 0, duration: 1, relevantLogs: [], fileSegments: [], callSegments: [], gaps: [], maxLanes: 0 };
 
-        const minTime = sourceLogs[0].timestamp;
-        const maxTime = sourceLogs[sourceLogs.length - 1].timestamp;
-        const duration = maxTime - minTime || 1;
+        // Filter out logs with invalid timestamps
+        const validLogs = sourceLogs.filter(log => 
+            log.timestamp && 
+            typeof log.timestamp === 'number' && 
+            !isNaN(log.timestamp) && 
+            isFinite(log.timestamp) &&
+            log.timestamp > 0
+        );
+
+        if (!validLogs.length) return { minTime: 0, duration: 1, relevantLogs: [], fileSegments: [], callSegments: [], gaps: [], maxLanes: 0 };
+
+        const minTime = validLogs[0].timestamp;
+        const maxTime = validLogs[validLogs.length - 1].timestamp;
+        // Ensure minimum duration to prevent scrunching when all events are at same time
+        // Use 1 second minimum or actual duration, whichever is larger
+        const duration = Math.max(maxTime - minTime, 1000);
 
         // 1. Filter interesting logs for markers (Errors & SIP Methods)
-        const relevantLogs = sourceLogs.filter(l => {
+        const relevantLogs = validLogs.filter(l => {
             // Global Error filter (Levels)
             if (l.level === 'ERROR' && !timelineEventFilters.error) return false;
 
@@ -92,17 +117,17 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
         const gaps: { start: number, end: number, duration: number }[] = [];
         const GAP_THRESHOLD = 60000; // 1 minute
 
-        if (sourceLogs.length > 0) {
+        if (validLogs.length > 0) {
             let currentSegment = {
-                fileName: sourceLogs[0].fileName || 'Unknown',
-                color: sourceLogs[0].fileColor || '#64748b',
-                start: sourceLogs[0].timestamp,
-                end: sourceLogs[0].timestamp,
+                fileName: validLogs[0].fileName || 'Unknown',
+                color: validLogs[0].fileColor || '#64748b',
+                start: validLogs[0].timestamp,
+                end: validLogs[0].timestamp,
                 duration: 0
             };
 
-            for (let i = 1; i < sourceLogs.length; i++) {
-                const log = sourceLogs[i];
+            for (let i = 1; i < validLogs.length; i++) {
+                const log = validLogs[i];
                 const logFileName = log.fileName || 'Unknown';
 
                 if (logFileName !== currentSegment.fileName) {
@@ -135,7 +160,7 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
 
         // 3. Compute Call Segments (Sessions) with Laning
         const callGroups: Record<string, { start: number, end: number, count: number, id: string }> = {};
-        sourceLogs.forEach(log => {
+        validLogs.forEach(log => {
             if (log.callId) {
                 if (!callGroups[log.callId]) {
                     callGroups[log.callId] = { start: log.timestamp, end: log.timestamp, count: 0, id: log.callId };
@@ -240,20 +265,23 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
     };
 
     const getWidth = (start: number, end: number) => {
+        // Ensure minimum width to prevent scrunching
+        const MIN_WIDTH_PERCENT = 0.3;
+        
         if (timelineZoomRange && !isTimelineCompact) {
             const zoomDuration = timelineZoomRange.end - timelineZoomRange.start;
             const w = ((end - start) / zoomDuration) * 100;
-            return Math.max(w, 0.2);
+            return Math.max(w, MIN_WIDTH_PERCENT);
         }
 
         if (!isTimelineCompact || !compactMetadata) {
             const w = ((end - start) / duration) * 100;
-            return Math.max(w, 0.2);
+            return Math.max(w, MIN_WIDTH_PERCENT);
         }
 
-        // For segments themselves
+        // For segments themselves in compact mode
         const w = ((end - start) / compactMetadata.totalDuration) * 100;
-        return Math.max(w, 0.1);
+        return Math.max(w, 0.2); // Slightly larger minimum for compact mode
     };
 
     const getColor = (log: LogEntry) => {
@@ -340,10 +368,25 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
         setScrollTargetTimestamp(targetTime);
     };
 
-    if (!logs.length) return null;
+    if (!logs.length || !sourceLogs.length) return null;
+
+    // Validate timestamps to prevent "Invalid time value" errors
+    const isValidTimestamp = (ts: number) => {
+        return typeof ts === 'number' && !isNaN(ts) && isFinite(ts) && ts > 0;
+    };
+
+    // Ensure minTime and duration are valid
+    if (!isValidTimestamp(minTime) || !isFinite(duration) || duration <= 0) {
+        return null;
+    }
 
     const startTime = timelineZoomRange && !isTimelineCompact ? timelineZoomRange.start : minTime;
     const endTime = timelineZoomRange && !isTimelineCompact ? timelineZoomRange.end : minTime + duration;
+
+    // Validate calculated times before formatting
+    if (!isValidTimestamp(startTime) || !isValidTimestamp(endTime)) {
+        return null;
+    }
 
     return (
         <div className="flex flex-col bg-slate-800 border-t border-slate-700 shrink-0 select-none" style={{ height }}>
@@ -454,14 +497,17 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
                 >
                     {/* 1. File Lane (Minimal Top Strip) */}
                     <div className="absolute top-0 left-0 right-0 h-1.5 z-30 opacity-80">
-                        {fileSegments.map((seg, idx) => (
+                        {fileSegments.map((seg, idx) => {
+                            const segWidth = getWidth(seg.start, seg.end);
+                            const segLeft = getPosition(seg.start);
+                            return (
                             <div
                                 key={idx}
                                 className="h-full border-r border-slate-900/20 box-border group/file"
                                 style={{
                                     position: 'absolute',
-                                    left: `${getPosition(seg.start)}%`,
-                                    width: `${getWidth(seg.start, seg.end)}%`,
+                                    left: `${segLeft}%`,
+                                    width: `${Math.max(segWidth, 0.5)}%`, // Minimum 0.5% width to prevent scrunching
                                     backgroundColor: seg.color,
                                     minWidth: '2px'
                                 }}
@@ -472,7 +518,8 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
                                     {seg.fileName}
                                 </div>
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
 
                     {/* 2. Gaps */}
@@ -491,6 +538,8 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
                     <div className="absolute top-4 left-0 right-0 bottom-0 z-10">
                         {callSegments.map((seg) => {
                             const isSelected = hoveredCallId === seg.id || (hoveredCorrelation?.type === 'callId' && hoveredCorrelation.value === seg.id);
+                            const segWidth = getWidth(seg.start, seg.end);
+                            const segLeft = getPosition(seg.start);
                             return (
                                 <div
                                     key={seg.id}
@@ -500,8 +549,8 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
                                         isSelected ? "opacity-100 z-50 ring-2 ring-yellow-400/50 bg-yellow-400/10" : "opacity-40 hover:opacity-70"
                                     )}
                                     style={{
-                                        left: `${getPosition(seg.start)}%`,
-                                        width: `${getWidth(seg.start, seg.end)}%`,
+                                        left: `${segLeft}%`,
+                                        width: `${Math.max(segWidth, 0.3)}%`, // Minimum 0.3% width to prevent scrunching
                                         top: `${(seg as any).laneIndex * 22}px`,
                                         backgroundColor: `${stc(seg.id)}55`
                                     }}
@@ -518,10 +567,20 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
 
                     {/* 4. Event Markers (Tall bars sticking up from lanes) */}
                     <div className="absolute top-4 left-0 right-0 bottom-0 z-20 pointer-events-none">
-                        {relevantLogs.map(log => {
+                        {relevantLogs.map((log, idx) => {
                             const keepAlive = isKeepAlive(log);
                             const laneTop = (log as any).laneIndex * 22;
                             const isSelected = log.id === selectedLogId;
+                            
+                            // Calculate position with minimum spacing to prevent scrunching
+                            let position = getPosition(log.timestamp);
+                            
+                            // If multiple events have the same timestamp, add small offset to prevent overlap
+                            if (idx > 0 && relevantLogs[idx - 1].timestamp === log.timestamp) {
+                                // Add 0.1% offset for each duplicate timestamp event
+                                const duplicateCount = relevantLogs.slice(0, idx).filter(l => l.timestamp === log.timestamp).length;
+                                position = Math.min(position + (duplicateCount * 0.1), 99.9);
+                            }
 
                             return (
                                 <div
@@ -532,14 +591,14 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
                                         isSelected ? "z-[60] w-[4px] ring-2 ring-yellow-400 ring-offset-1 ring-offset-slate-900" : ""
                                     )}
                                     style={{
-                                        left: `${getPosition(log.timestamp)}%`,
+                                        left: `${position}%`,
                                         top: `${laneTop}px`,
                                         backgroundColor: isSelected ? '#fbbf24' : getColor(log), // Gold if selected
                                     }}
                                     onClick={(e) => { e.stopPropagation(); setSelectedLogId(log.id === selectedLogId ? null : log.id); }}
                                     onMouseEnter={() => {
                                         setHoveredCallId(log.callId || null);
-                                        setHoveredEvent({ log, x: getPosition(log.timestamp), y: laneTop });
+                                        setHoveredEvent({ log, x: position, y: laneTop });
                                     }}
                                     onMouseLeave={() => {
                                         setHoveredCallId(null);
@@ -577,7 +636,11 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
                                             className="w-1.5 h-1.5 rounded-full shrink-0"
                                             style={{ backgroundColor: getSipColorHex(rl.sipMethod || null) }}
                                         />
-                                        <span className="font-mono text-slate-400 shrink-0">{format(new Date(rl.timestamp), 'HH:mm:ss')}</span>
+                                        <span className="font-mono text-slate-400 shrink-0">
+                                            {rl.timestamp && !isNaN(rl.timestamp) && isFinite(rl.timestamp) 
+                                                ? format(new Date(rl.timestamp), 'HH:mm:ss')
+                                                : '--:--:--'}
+                                        </span>
                                         <span className="font-bold text-slate-200 truncate">{rl.sipMethod || rl.message.split(' ')[0]}</span>
                                     </div>
                                 ))}

@@ -1,5 +1,5 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { sql } from '../../lib/db';
+import { sql } from '../../lib/db.js';
 
 /**
  * GET /api/timeline
@@ -37,31 +37,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const endTimeNum = parseInt(endTime as string, 10);
         const bucketSizeNum = parseInt(bucketSize as string, 10);
 
-        // Build WHERE clause
-        const conditions: string[] = [
-            `timestamp >= ${startTimeNum}`,
-            `timestamp <= ${endTimeNum}`,
-        ];
-
+        // Build WHERE clause with parameterized queries
+        let result: any[];
         if (fileName) {
-            conditions.push(`file_name = '${fileName}'`);
+            result = await sql`
+                SELECT 
+                    FLOOR(timestamp / ${bucketSizeNum * 1000}) * ${bucketSizeNum * 1000} as time_bucket,
+                    COUNT(*) FILTER (WHERE level = 'ERROR') as error_count,
+                    COUNT(*) FILTER (WHERE is_sip = true AND sip_method NOT LIKE '2%' AND sip_method NOT LIKE '3%') as sip_request_count,
+                    COUNT(*) FILTER (WHERE is_sip = true AND sip_method LIKE '2%') as sip_success_count,
+                    COUNT(*) FILTER (WHERE is_sip = true AND (sip_method LIKE '4%' OR sip_method LIKE '5%' OR sip_method LIKE '6%')) as sip_error_count
+                FROM logs
+                WHERE timestamp >= ${startTimeNum} AND timestamp <= ${endTimeNum} AND file_name = ${fileName}
+                GROUP BY time_bucket
+                ORDER BY time_bucket ASC
+            `;
+        } else {
+            result = await sql`
+                SELECT 
+                    FLOOR(timestamp / ${bucketSizeNum * 1000}) * ${bucketSizeNum * 1000} as time_bucket,
+                    COUNT(*) FILTER (WHERE level = 'ERROR') as error_count,
+                    COUNT(*) FILTER (WHERE is_sip = true AND sip_method NOT LIKE '2%' AND sip_method NOT LIKE '3%') as sip_request_count,
+                    COUNT(*) FILTER (WHERE is_sip = true AND sip_method LIKE '2%') as sip_success_count,
+                    COUNT(*) FILTER (WHERE is_sip = true AND (sip_method LIKE '4%' OR sip_method LIKE '5%' OR sip_method LIKE '6%')) as sip_error_count
+                FROM logs
+                WHERE timestamp >= ${startTimeNum} AND timestamp <= ${endTimeNum}
+                GROUP BY time_bucket
+                ORDER BY time_bucket ASC
+            `;
         }
-
-        const whereClause = conditions.join(' AND ');
-
-        // Aggregate logs by time bucket
-        const result = await sql`
-            SELECT 
-                FLOOR(timestamp / ${bucketSizeNum * 1000}) * ${bucketSizeNum * 1000} as time_bucket,
-                COUNT(*) FILTER (WHERE level = 'ERROR') as error_count,
-                COUNT(*) FILTER (WHERE is_sip = true AND sip_method NOT LIKE '2%' AND sip_method NOT LIKE '3%') as sip_request_count,
-                COUNT(*) FILTER (WHERE is_sip = true AND sip_method LIKE '2%') as sip_success_count,
-                COUNT(*) FILTER (WHERE is_sip = true AND (sip_method LIKE '4%' OR sip_method LIKE '5%' OR sip_method LIKE '6%')) as sip_error_count
-            FROM logs
-            WHERE ${sql.unsafe(whereClause)}
-            GROUP BY time_bucket
-            ORDER BY time_bucket ASC
-        `;
 
         const timeline = result.map((row: any) => ({
             timeBucket: parseInt(row.time_bucket, 10),

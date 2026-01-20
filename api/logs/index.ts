@@ -1,5 +1,5 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { sql } from '../../lib/db';
+import { sql } from '../../lib/db.js';
 
 /**
  * GET /api/logs
@@ -41,75 +41,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const offsetNum = parseInt(offset as string, 10);
         const limitNum = Math.min(parseInt(limit as string, 10), 5000); // Max 5000 per request
 
-        // Build WHERE clause
-        const conditions: string[] = [];
-        const params: any[] = [];
-        let paramIndex = 1;
-
+        // Build WHERE conditions using template literals (Neon doesn't support sql.unsafe)
+        const whereParts: any[] = [];
+        
         if (component) {
-            conditions.push(`component = $${paramIndex++}`);
-            params.push(component);
+            whereParts.push(sql`component = ${component as string}`);
         }
-
         if (callId) {
-            conditions.push(`call_id = $${paramIndex++}`);
-            params.push(callId);
+            whereParts.push(sql`call_id = ${callId as string}`);
         }
-
         if (fileName) {
-            conditions.push(`file_name = $${paramIndex++}`);
-            params.push(fileName);
+            whereParts.push(sql`file_name = ${fileName as string}`);
         }
-
         if (level) {
-            conditions.push(`level = $${paramIndex++}`);
-            params.push(level.toUpperCase());
+            whereParts.push(sql`level = ${(level as string).toUpperCase()}`);
         }
-
         if (isSip !== undefined) {
-            conditions.push(`is_sip = $${paramIndex++}`);
-            params.push(isSip === 'true' || isSip === true);
+            const isSipBool = typeof isSip === 'string' ? isSip === 'true' : Boolean(isSip);
+            whereParts.push(sql`is_sip = ${isSipBool}`);
         }
-
         if (startTime) {
-            conditions.push(`timestamp >= $${paramIndex++}`);
-            params.push(parseInt(startTime as string, 10));
+            whereParts.push(sql`timestamp >= ${parseInt(startTime as string, 10)}`);
         }
-
         if (endTime) {
-            conditions.push(`timestamp <= $${paramIndex++}`);
-            params.push(parseInt(endTime as string, 10));
+            whereParts.push(sql`timestamp <= ${parseInt(endTime as string, 10)}`);
         }
-
         if (search) {
-            // Full-text search using PostgreSQL tsvector
-            conditions.push(`to_tsvector('english', message || ' ' || COALESCE(payload, '')) @@ plainto_tsquery('english', $${paramIndex++})`);
-            params.push(search);
+            whereParts.push(sql`to_tsvector('english', message || ' ' || COALESCE(payload, '')) @@ plainto_tsquery('english', ${search as string})`);
         }
-
-        const whereClause = conditions.length > 0 
-            ? `WHERE ${conditions.join(' AND ')}`
-            : '';
-
-        // Get total count
-        const countResult = await sql`
-            SELECT COUNT(*) as total FROM logs ${sql.unsafe(whereClause)}
-        `;
+        
+        // Build queries
+        let countResult: any[];
+        let logsResult: any[];
+        
+        if (whereParts.length === 0) {
+            // No filters
+            countResult = await sql`SELECT COUNT(*) as total FROM logs`;
+            logsResult = await sql`SELECT * FROM logs ORDER BY timestamp ASC LIMIT ${limitNum} OFFSET ${offsetNum}`;
+        } else {
+            // Combine WHERE conditions
+            let whereClause = whereParts[0];
+            for (let i = 1; i < whereParts.length; i++) {
+                whereClause = sql`${whereClause} AND ${whereParts[i]}`;
+            }
+            
+            countResult = await sql`SELECT COUNT(*) as total FROM logs WHERE ${whereClause}`;
+            logsResult = await sql`SELECT * FROM logs WHERE ${whereClause} ORDER BY timestamp ASC LIMIT ${limitNum} OFFSET ${offsetNum}`;
+        }
+        
         const total = parseInt(countResult[0]?.total || '0', 10);
-
-        // Get logs with pagination
-        params.push(limitNum, offsetNum);
-        const logsResult = await sql`
-            SELECT * FROM logs 
-            ${sql.unsafe(whereClause)}
-            ORDER BY timestamp ASC 
-            LIMIT $${paramIndex++} OFFSET $${paramIndex++}
-        `;
 
         // Map database columns to LogEntry format
         const logs = logsResult.map((row: any) => ({
             id: row.id,
-            timestamp: row.timestamp,
+            // Ensure timestamp is a number (database returns BIGINT which might be string in JSON)
+            timestamp: typeof row.timestamp === 'string' ? parseInt(row.timestamp, 10) : Number(row.timestamp),
             rawTimestamp: row.raw_timestamp,
             level: row.level,
             component: row.component,

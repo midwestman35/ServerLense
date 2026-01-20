@@ -108,7 +108,9 @@ const CallFlowViewer: React.FC<CallFlowViewerProps> = ({ callId, onClose }) => {
                                     <div key={log.id} className="relative flex items-center group">
                                         {/* Timestamp Left */}
                                         <div className="absolute left-2 text-[10px] text-slate-500 font-mono w-24 text-right">
-                                            {format(new Date(log.timestamp), 'HH:mm:ss.SSS')}
+                                            {log.timestamp && typeof log.timestamp === 'number' && !isNaN(log.timestamp) && isFinite(log.timestamp) && log.timestamp > 0
+                                                ? format(new Date(log.timestamp), 'HH:mm:ss.SSS')
+                                                : '--:--:--.---'}
                                         </div>
 
                                         <div className="flex-grow flex items-center justify-between px-12 mx-auto w-full max-w-4xl">

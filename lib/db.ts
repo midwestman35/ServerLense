@@ -1,16 +1,42 @@
-import { neon } from '@neondatabase/serverless';
+import { neon, type NeonQueryFunction } from '@neondatabase/serverless';
 
-// Get connection string - will be set by environment or dotenv
+// Get connection string - Vercel automatically loads .env.local in dev mode
 function getConnectionString(): string {
-  const connStr = process.env.POSTGRES_URL;
+  // Try multiple possible environment variable names (Vercel provides several)
+  const connStr = process.env.POSTGRES_URL || 
+                  process.env.DATABASE_URL ||
+                  process.env.POSTGRES_PRISMA_URL;
+  
   if (!connStr) {
-    throw new Error('POSTGRES_URL environment variable is not set. Make sure .env.local is loaded.');
+    const available = Object.keys(process.env).filter(k => 
+      k.includes('POSTGRES') || k.includes('DATABASE')
+    ).join(', ');
+    throw new Error(`POSTGRES_URL environment variable is not set. Available env vars: ${available || 'none'}`);
   }
   return connStr;
 }
 
-// Initialize sql instance lazily
-const sql = neon(getConnectionString());
+// Lazy initialization - don't create connection until first use
+// This prevents errors when module loads before env vars are available
+let sqlInstance: NeonQueryFunction<false, false> | null = null;
+
+function getSql(): NeonQueryFunction<false, false> {
+  if (!sqlInstance) {
+    try {
+      sqlInstance = neon(getConnectionString());
+    } catch (error: any) {
+      console.error('Failed to initialize database:', error.message);
+      throw error;
+    }
+  }
+  return sqlInstance;
+}
+
+// Export getSql function for lazy initialization  
+export { getSql };
+
+// Export sql - simple lazy getter (will be initialized on first use)
+export const sql = getSql();
 
 export interface LogEntry {
   id?: number;
@@ -87,5 +113,3 @@ export async function initDatabase() {
     throw error;
   }
 }
-
-export { sql };

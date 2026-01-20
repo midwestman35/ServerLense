@@ -1,4 +1,4 @@
-﻿import { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useLogContext } from '../../contexts/LogContext';
 import { Download, X, Star } from 'lucide-react';
 import type { LogEntry } from '../../types';
@@ -76,7 +76,9 @@ export default function ExportModal({ isOpen, onClose }: ExportModalProps) {
 
     const rows = events.map(event => [
       event.id.toString(),
-      new Date(event.timestamp).toISOString(),
+      event.timestamp && typeof event.timestamp === 'number' && !isNaN(event.timestamp) && isFinite(event.timestamp) && event.timestamp > 0
+        ? new Date(event.timestamp).toISOString()
+        : '',
       `"${event.rawTimestamp.replace(/"/g, '""')}"`,
       event.level,
       `"${event.component.replace(/"/g, '""')}"`,

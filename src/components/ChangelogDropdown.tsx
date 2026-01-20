@@ -12,21 +12,22 @@ interface ChangelogEntry {
 // Latest changelog entries - update this when new features are added
 const changelogEntries: ChangelogEntry[] = [
   {
-    version: '1.5.0',
+    version: '2.0.0',
     date: '2026-01-20',
     features: [
-      '💾 IndexedDB Storage - Large files (>50MB) automatically stored in browser IndexedDB for persistent, memory-efficient access',
-      '🚀 Automatic Mode Detection - Seamlessly switches between in-memory (small files) and IndexedDB (large files) modes',
-      '🔍 IndexedDB Filtering - All filters (component, SIP, correlation, text search) work with IndexedDB-stored logs',
-      '📊 Lazy Loading - Only loads visible/filtered logs into memory, dramatically reducing memory usage',
-      '⚡ Efficient Querying - IndexedDB indexes enable fast filtering by timestamp, component, callId, and more',
-      '🔄 Backward Compatible - Small files continue to use fast in-memory processing',
-      '📈 Scalability - Support for files of any size without browser crashes (tested with 740MB+ files)'
+      '🌐 Server-Side Processing - Log parsing moved to Vercel serverless functions for unlimited scalability',
+      '💾 PostgreSQL Database - All logs stored in Neon PostgreSQL database (no browser storage limits)',
+      '📤 API-Based Architecture - All data operations now go through REST API endpoints',
+      '⚡ Server-Side Parsing - Parse 800MB+ files without browser memory limits',
+      '🔄 Automatic Pagination - Efficient pagination for large datasets',
+      '📊 Pre-Computed Aggregations - Fast correlation counts and timeline data from database',
+      '🗑️ Temporary File Storage - Files uploaded to Vercel Blob Storage temporarily, then deleted after parsing',
+      '🚀 Scalability - Support for files of any size without browser crashes'
     ],
     fixes: [
-      '🔧 Fixed memory exhaustion for very large files - logs now stored in IndexedDB instead of React state',
-      '⚡ Optimized correlation data computation for IndexedDB mode',
-      '🎯 Improved initial load performance for large datasets'
+      '🔧 Removed browser memory limitations - all processing happens server-side',
+      '⚡ Optimized data fetching with API pagination',
+      '🎯 Improved performance for large datasets with database indexes'
     ]
   },
   {

@@ -124,9 +124,10 @@ const LogViewer = () => {
         favoriteLogIds,
         toggleFavorite,
         hoveredCorrelation,
-        useIndexedDBMode,
-        loadLogsFromIndexedDB,
-        visibleRange
+        visibleRange,
+        loadMoreLogs,
+        hasMoreLogs,
+        loading
     } = useLogContext();
     const parentRef = useRef<HTMLDivElement>(null);
     // Phase 2 Optimization: Debounce timeline updates to reduce re-renders
@@ -155,32 +156,28 @@ const LogViewer = () => {
         }, 100);
     }, [setVisibleRange]);
 
-    // Lazy load logs from IndexedDB when visible range changes (for IndexedDB mode)
+    // Load more logs when scrolling near the end (for API pagination)
     useEffect(() => {
-        if (!useIndexedDBMode || !visibleRange || (visibleRange.start === 0 && visibleRange.end === 1)) return;
+        if (!hasMoreLogs || loading) return;
         
-        const loadVisibleLogs = async () => {
-            try {
-                // Load logs in the visible timestamp range
-                // Note: This is a placeholder - the actual loading is handled by the filter effect in LogContext
-                // This could be used for more aggressive lazy loading in the future
-                await loadLogsFromIndexedDB({
-                    timestampRange: {
-                        start: visibleRange.start,
-                        end: visibleRange.end
-                    },
-                    limit: 5000 // Load up to 5000 logs in visible range
-                });
-            } catch (error) {
-                console.error('Failed to load visible logs from IndexedDB:', error);
+        const handleScroll = () => {
+            if (!parentRef.current) return;
+            
+            const { scrollTop, scrollHeight, clientHeight } = parentRef.current;
+            const scrollPercentage = (scrollTop + clientHeight) / scrollHeight;
+            
+            // Load more when scrolled 80% down
+            if (scrollPercentage > 0.8) {
+                loadMoreLogs();
             }
         };
         
-        // Only load if range is meaningful (not initial state)
-        if (visibleRange.end > visibleRange.start && visibleRange.start > 0) {
-            loadVisibleLogs();
+        const element = parentRef.current;
+        if (element) {
+            element.addEventListener('scroll', handleScroll);
+            return () => element.removeEventListener('scroll', handleScroll);
         }
-    }, [useIndexedDBMode, visibleRange, loadLogsFromIndexedDB]);
+    }, [hasMoreLogs, loading, loadMoreLogs]);
 
     const rowVirtualizer = useVirtualizer({
         count: filteredLogs.length,

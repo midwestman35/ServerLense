@@ -1,5 +1,5 @@
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { sql } from '../../lib/db';
+import { sql } from '../../lib/db.js';
 import { list, del } from '@vercel/blob';
 
 /**
@@ -19,8 +19,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         // Delete all logs from Postgres
-        const deleteResult = await sql`DELETE FROM logs`;
-        const deletedLogs = deleteResult.rowCount || 0;
+        const deleteResult: any = await sql`DELETE FROM logs`;
+        const deletedLogs = Array.isArray(deleteResult) ? deleteResult.length : (deleteResult.rowCount || 0);
 
         // Delete all temporary blob files
         let deletedBlobs = 0;

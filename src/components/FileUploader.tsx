@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import { useLogContext } from '../contexts/LogContext';
-import { parseLogFile } from '../utils/parser';
+import { uploadLogFile } from '../api/client';
 import { Upload, AlertTriangle, X } from 'lucide-react';
 import { validateFile, exceedsCriticalSize, estimateMemoryUsage, formatFileSize } from '../utils/fileUtils';
-import type { LogEntry } from '../types';
 
 const FileUploader = () => {
-    const { logs, setLogs, setLoading, setSelectedLogId, parsingProgress, setParsingProgress, enableIndexedDBMode } = useLogContext();
+    const { setLoading, setSelectedLogId, parsingProgress, setParsingProgress, refreshLogs } = useLogContext();
     const [fileError, setFileError] = useState<string | null>(null);
     const [fileWarning, setFileWarning] = useState<string | null>(null);
 
@@ -54,73 +53,35 @@ const FileUploader = () => {
         setLoading(true);
         setParsingProgress(0);
         try {
-            // Process all files
-            // Use let instead of const to allow reassignment with concat
-            let allParsedLogs: LogEntry[] = [];
-            // Fix: Use reduce instead of spread operator to prevent "Maximum call stack size exceeded" error with large datasets
-            let currentMaxId = logs.length > 0 ? logs.reduce((max, log) => Math.max(max, log.id), 0) : 0;
-
-            const FILE_COLORS = ['#3b82f6', '#eab308', '#a855f7', '#ec4899', '#22c55e', '#f97316', '#06b6d4', '#64748b'];
-
-            // Check if any file is large enough to use IndexedDB
-            const hasLargeFile = validationResults.some(r => r.file.size > 50 * 1024 * 1024);
+            // Process all files using API
+            let totalParsed = 0;
             
-            if (hasLargeFile) {
-                // For large files, use IndexedDB parser (writes directly to IndexedDB)
-                // Don't load into memory - logs will be loaded on-demand
-                for (let i = 0; i < validationResults.length; i++) {
-                    const { file } = validationResults[i];
-                    const color = FILE_COLORS[i % FILE_COLORS.length];
-                    const startId = currentMaxId + 1;
-                    const fileProgressCallback = (progress: number) => {
-                        const fileProgress = (i / validationResults.length) + (progress / validationResults.length);
-                        setParsingProgress(fileProgress);
-                    };
-                    
-                    const result = await parseLogFile(file, color, startId, fileProgressCallback, true);
-                    
-                    // If IndexedDB was used, result is an object, not an array
-                    if (result && typeof result === 'object' && 'totalParsed' in result) {
-                        // IndexedDB was used - logs are already stored, just update max ID estimate
-                        currentMaxId += result.totalParsed;
-                    } else if (Array.isArray(result)) {
-                        // Traditional parsing - add to array
-                        allParsedLogs = allParsedLogs.concat(result);
-                        if (result.length > 0) {
-                            currentMaxId = result.reduce((max, log) => Math.max(max, log.id), currentMaxId);
-                        }
-                    }
-                }
+            for (let i = 0; i < validationResults.length; i++) {
+                const { file } = validationResults[i];
                 
-                // For IndexedDB mode, logs are already stored in IndexedDB
-                // Trigger IndexedDB mode to load the data
-                await enableIndexedDBMode();
-            } else {
-                // Small files - use traditional parsing
-                for (let i = 0; i < validationResults.length; i++) {
-                    const { file } = validationResults[i];
-                    const color = FILE_COLORS[i % FILE_COLORS.length];
-                    const startId = currentMaxId + 1;
-                    const fileProgressCallback = (progress: number) => {
-                        const fileProgress = (i / validationResults.length) + (progress / validationResults.length);
-                        setParsingProgress(fileProgress);
-                    };
-                    const parsed = await parseLogFile(file, color, startId, fileProgressCallback, false);
-                    
-                    if (Array.isArray(parsed)) {
-                        allParsedLogs = allParsedLogs.concat(parsed);
-                        if (parsed.length > 0) {
-                            currentMaxId = parsed.reduce((max, log) => Math.max(max, log.id), currentMaxId);
-                        }
-                    }
+                // Calculate progress callback for this file
+                const fileProgressCallback = (progress: number) => {
+                    // Progress for this file: (i / total) + (progress / total)
+                    const fileProgress = (i / validationResults.length) + (progress / validationResults.length);
+                    setParsingProgress(fileProgress);
+                };
+                
+                try {
+                    const result = await uploadLogFile(file, fileProgressCallback);
+                    totalParsed += result.count;
+                } catch (err) {
+                    // If one file fails, continue with others but show error
+                    console.error(`Failed to parse ${file.name}:`, err);
+                    setFileError(`Failed to parse ${file.name}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                    // Continue with next file
                 }
-
-                // Merge with existing logs (append mode) using concat for memory efficiency
-                // Then sort by timestamp
-                const mergedLogs = logs.concat(allParsedLogs);
-                mergedLogs.sort((a, b) => a.timestamp - b.timestamp);
-                setLogs(mergedLogs);
             }
+            
+            // Refresh logs from API after all files are processed
+            if (totalParsed > 0 && refreshLogs) {
+                await refreshLogs();
+            }
+            
             setSelectedLogId(null);
         } catch (err) {
             console.error("Failed to parse", err);
@@ -216,14 +177,8 @@ const FileUploader = () => {
                     <Upload size={40} className="text-[var(--accent-blue)]" />
                 </div>
 
-                <h3 className="text-xl font-bold mb-2 text-[var(--text-primary)]">Drop Log File{logs.length > 0 ? '(s)' : ''} Here</h3>
+                <h3 className="text-xl font-bold mb-2 text-[var(--text-primary)]">Drop Log File(s) Here</h3>
                 <p className="text-[var(--text-secondary)] text-sm mb-4">or click to browse (.log, .txt, .csv)</p>
-
-                {logs.length > 0 && (
-                    <div className="px-3 py-1 rounded-full bg-[var(--accent-blue)]/10 text-[var(--accent-blue)] text-xs font-medium">
-                        Merging with {logs.length} existing logs
-                    </div>
-                )}
             </div>
         </div>
     );

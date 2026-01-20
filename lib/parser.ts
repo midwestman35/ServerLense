@@ -14,8 +14,8 @@
  * - Streaming support for large files
  */
 
-import type { LogEntry, LogLevel } from './types';
-import { cleanupLogEntry } from './messageCleanup';
+import type { LogEntry, LogLevel } from './types.js';
+import { cleanupLogEntry } from './messageCleanup.js';
 
 /**
  * Fetch file content from blob URL
@@ -225,7 +225,7 @@ function parseDatadogCSV(text: string, fileColor: string, fileName: string): Log
             const callIdMatch = message.match(/callId[=:]\s*([^\s;,\[\]\(\)]+)/i) || message.match(/Call-ID:\s*([^\s]+)/i);
             if (callIdMatch) {
                 entry.callId = callIdMatch[1].trim();
-                entry._callIdLower = entry.callId.toLowerCase();
+                entry._callIdLower = entry.callId?.toLowerCase() || '';
             }
 
             const extensionMatch = message.match(/extensionID:\s*Optional\[(\d+)\]/);

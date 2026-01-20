@@ -1,6 +1,8 @@
 import type { LogEntry, LogLevel } from '../types';
 import { cleanupLogEntry } from './messageCleanup';
-import { dbManager } from './indexedDB';
+// Note: IndexedDB import removed - client-side parsing is deprecated in favor of server-side API
+// This file is kept for backward compatibility but should not be used in new code
+// Use the API client (src/api/client.ts) instead for file uploads
 
 /**
  * Log Parser for LogScrub

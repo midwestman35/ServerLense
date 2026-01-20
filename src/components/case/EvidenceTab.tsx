@@ -1,4 +1,4 @@
-﻿import { useCase } from '../../store/caseContext';
+import { useCase } from '../../store/caseContext';
 export default function EvidenceTab() {
   const { activeCase } = useCase();
   if (!activeCase) return <div style={{ color: 'var(--text-tertiary)', fontSize: '13px' }}>Select a case to view evidence</div>;
@@ -10,7 +10,11 @@ export default function EvidenceTab() {
         <div key={b.id} style={{ padding: 'var(--spacing-md)', backgroundColor: 'var(--surface)', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--accent)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 'var(--spacing-xs)' }}>
             <span style={{ fontSize: '11px', fontWeight: '600', textTransform: 'uppercase', color: 'var(--accent)' }}>{b.tag}</span>
-            <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>{new Date(b.timestamp).toLocaleString()}</span>
+            <span style={{ fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                {b.timestamp && typeof b.timestamp === 'number' && !isNaN(b.timestamp) && isFinite(b.timestamp) && b.timestamp > 0
+                    ? new Date(b.timestamp).toLocaleString()
+                    : 'Invalid date'}
+            </span>
           </div>
           <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Event: {b.eventId}</div>
           {b.note && <div style={{ marginTop: 'var(--spacing-sm)', padding: 'var(--spacing-sm)', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', fontSize: '13px' }}>{b.note}</div>}

@@ -10,7 +10,16 @@ export default defineConfig({
     assetsDir: 'assets',
   },
   server: {
-    port: 5173,
-    strictPort: true,
+    // Vercel dev will assign the port, or use 5173 as fallback
+    port: process.env.PORT ? parseInt(process.env.PORT) : 5173,
+    strictPort: false, // Allow Vercel to assign port
+    host: true, // Listen on all network interfaces
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        secure: false,
+      }
+    }
   }
 })
