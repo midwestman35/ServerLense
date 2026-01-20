@@ -2,7 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import { put, del } from '@vercel/blob';
 import { parseLogFile } from '../lib/parser.js';
 import { sql } from '../lib/db.js';
-import type { LogEntry } from '../lib/types';
+import type { LogEntry } from '../lib/types.js';
 import formidable from 'formidable';
 import { IncomingMessage } from 'http';
 
