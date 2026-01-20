@@ -34,19 +34,29 @@ const TimelineScrubber: React.FC<TimelineScrubberProps> = ({ height = 80 }) => {
 
 
     // Decide which logs to show on timeline
-    // Phase 2 Optimization: filteredLogs is already sorted, so only sort if using 'full' mode or if order changed
+    // PERFORMANCE: Limit timeline to max 10k events to prevent UI freeze
+    const MAX_TIMELINE_EVENTS = 10000;
     const sourceLogsRaw = timelineViewMode === 'full' ? logs : filteredLogs;
     const sourceLogs = useMemo(() => {
+        // Limit the number of logs processed for timeline to prevent performance issues
+        let limitedLogs = sourceLogsRaw;
+        
+        if (sourceLogsRaw.length > MAX_TIMELINE_EVENTS) {
+            // Sample logs evenly across the dataset
+            const step = Math.ceil(sourceLogsRaw.length / MAX_TIMELINE_EVENTS);
+            limitedLogs = sourceLogsRaw.filter((_, idx) => idx % step === 0).slice(0, MAX_TIMELINE_EVENTS);
+        }
+        
         // filteredLogs is already sorted, so only sort for 'full' mode or if timestamps aren't already sorted
         if (timelineViewMode === 'filtered') {
             // filteredLogs should already be sorted, so we can use it directly
-            return sourceLogsRaw;
+            return limitedLogs;
         }
         // For 'full' mode, check if already sorted, otherwise sort
-        const needsSort = sourceLogsRaw.length > 1 && sourceLogsRaw.some((log, idx) => 
-            idx > 0 && sourceLogsRaw[idx - 1].timestamp > log.timestamp
+        const needsSort = limitedLogs.length > 1 && limitedLogs.some((log, idx) => 
+            idx > 0 && limitedLogs[idx - 1].timestamp > log.timestamp
         );
-        return needsSort ? [...sourceLogsRaw].sort((a, b) => a.timestamp - b.timestamp) : sourceLogsRaw;
+        return needsSort ? [...limitedLogs].sort((a, b) => a.timestamp - b.timestamp) : limitedLogs;
     }, [sourceLogsRaw, timelineViewMode]);
 
     const { minTime, duration, relevantLogs, fileSegments, callSegments, gaps, maxLanes } = useMemo(() => {

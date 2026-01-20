@@ -278,13 +278,24 @@ class IndexedDBManager {
 
     /**
      * Get all unique values for an index (for correlation sidebar)
+     * Optimized to handle null/undefined values
      */
     async getUniqueValues(indexName: string): Promise<Set<string>> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const transaction = db.transaction([STORE_NAME], 'readonly');
             const store = transaction.objectStore(STORE_NAME);
-            const index = store.index(indexName);
+            
+            // Handle case where index might not exist
+            let index: IDBIndex;
+            try {
+                index = store.index(indexName);
+            } catch (e) {
+                // Index doesn't exist, return empty set
+                resolve(new Set());
+                return;
+            }
+            
             const values = new Set<string>();
             
             const request = index.openKeyCursor();
@@ -292,7 +303,11 @@ class IndexedDBManager {
             request.onsuccess = (event) => {
                 const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result;
                 if (cursor) {
-                    if (cursor.key) values.add(String(cursor.key));
+                    const key = cursor.key;
+                    // Only add non-null, non-undefined values
+                    if (key !== null && key !== undefined) {
+                        values.add(String(key));
+                    }
                     cursor.continue();
                 } else {
                     resolve(values);

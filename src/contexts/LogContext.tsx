@@ -240,6 +240,20 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
                     filters.callId = callIdFilters[0].value;
                 }
                 
+                // CRITICAL: Limit initial load to prevent memory exhaustion
+                // For large datasets, only load a reasonable number of logs initially
+                // Virtual scrolling will load more as needed
+                const MAX_INITIAL_LOGS = 5000;
+                
+                // If no specific filters, limit the load
+                const hasSpecificFilters = selectedComponentFilter || isSipFilterEnabled || 
+                    activeFileFilters.length > 0 || callIdFilters.length > 0 || filterText;
+                
+                if (!hasSpecificFilters) {
+                    // No filters - load limited sample for initial display
+                    filters.limit = MAX_INITIAL_LOGS;
+                }
+                
                 // Text search - for now, load all and filter in memory (IndexedDB doesn't support full-text search easily)
                 // In the future, we could add a full-text search index
                 let loadedLogs = await loadLogsFromIndexedDB(filters);
@@ -382,18 +396,78 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
     }, [logs.length]);
 
 
-    // Computed unique IDs and Counts for Sidebar
-    // For IndexedDB mode, use indexedDBLogs; otherwise use logs
+    // State for correlation data (loaded asynchronously for IndexedDB mode)
+    const [correlationDataState, setCorrelationDataState] = useState<{
+        reportIds: string[];
+        operatorIds: string[];
+        extensionIds: string[];
+        stationIds: string[];
+        callIds: string[];
+        fileNames: string[];
+    }>({
+        reportIds: [],
+        operatorIds: [],
+        extensionIds: [],
+        stationIds: [],
+        callIds: [],
+        fileNames: []
+    });
+    const [correlationCountsState, setCorrelationCountsState] = useState<Record<string, number>>({});
+
+    // Load correlation data from IndexedDB when in IndexedDB mode
+    useEffect(() => {
+        if (!useIndexedDBMode) {
+            // Use in-memory computation for small files
+            return;
+        }
+
+        const loadCorrelationData = async () => {
+            try {
+                // Use IndexedDB's efficient getUniqueValues instead of iterating all logs
+                const [reportIdsSet, operatorIdsSet, extensionIdsSet, stationIdsSet, callIdsSet, fileNamesSet] = await Promise.all([
+                    dbManager.getUniqueValues('reportId'),
+                    dbManager.getUniqueValues('operatorId'),
+                    dbManager.getUniqueValues('extensionId'),
+                    dbManager.getUniqueValues('stationId'),
+                    dbManager.getUniqueValues('callId'),
+                    dbManager.getUniqueValues('fileName')
+                ]);
+
+                setCorrelationDataState({
+                    reportIds: Array.from(reportIdsSet).sort(),
+                    operatorIds: Array.from(operatorIdsSet).sort(),
+                    extensionIds: Array.from(extensionIdsSet).sort(),
+                    stationIds: Array.from(stationIdsSet).sort(),
+                    callIds: Array.from(callIdsSet).sort(),
+                    fileNames: Array.from(fileNamesSet).sort()
+                });
+
+                // For counts, we'd need to query with filters - for now, use empty counts
+                // TODO: Implement efficient counting with IndexedDB queries
+                setCorrelationCountsState({});
+            } catch (error) {
+                console.error('Failed to load correlation data from IndexedDB:', error);
+            }
+        };
+
+        loadCorrelationData();
+    }, [useIndexedDBMode]);
+
+    // Computed unique IDs and Counts for Sidebar (for in-memory mode)
     const { correlationData, correlationCounts } = useMemo(() => {
-        // Use appropriate log source based on mode
-        const sourceLogsArray = useIndexedDBMode ? indexedDBLogs : logs;
-        
-        // 1. Determine local source logs based on "File" filters ONLY
-        // This ensures the lists (Call IDs, etc.) show valid options for the selected files.
+        // For IndexedDB mode, use the async-loaded state
+        if (useIndexedDBMode) {
+            return {
+                correlationData: correlationDataState,
+                correlationCounts: correlationCountsState
+            };
+        }
+
+        // For in-memory mode, compute from logs
         const activeFileFilters = activeCorrelations.filter(c => c.type === 'file');
         const sourceLogs = activeFileFilters.length > 0
-            ? sourceLogsArray.filter(log => activeFileFilters.some(f => f.value === log.fileName))
-            : sourceLogsArray;
+            ? logs.filter(log => activeFileFilters.some(f => f.value === log.fileName))
+            : logs;
 
         const reportIds = new Set<string>();
         const operatorIds = new Set<string>();
@@ -409,10 +483,6 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
             counts[key] = (counts[key] || 0) + 1;
         };
 
-        // Note: For counts, we might want global counts or filtered counts. 
-        // User asked "if you only have 1 file toggled just have all the call ids... from that log".
-        // This implies the COUNT should also reflect that file.
-
         sourceLogs.forEach(log => {
             if (log.reportId) { reportIds.add(log.reportId); increment('report', log.reportId); }
             if (log.operatorId) { operatorIds.add(log.operatorId); increment('operator', log.operatorId); }
@@ -422,41 +492,9 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
             if (log.fileName) { fileNames.add(log.fileName); increment('file', log.fileName); }
         });
 
-        // Also ensure all available files are listed from the raw logs, but counts might be affected?
-        // Actually, if we filter usage by File A, the count for File B is 0 in this view?
-        // Standard behavior: List options from the *context*. If File A is selected, we only see File A stuff.
-        // But for the "Files" list itself, we usually want to see ALL files to switch.
-        // So `fileNames` should probably come from ALL logs.
-        if (activeFileFilters.length > 0) {
-            logs.forEach(log => {
-                if (log.fileName) {
-                    fileNames.add(log.fileName);
-                    // We need a separate count for files independent of the filter?
-                    // Let's stick to the mapped counts for now.
-                }
-            });
-            // Re-calc file counts from ALL logs so user sees what they *could* select?
-            // Simple approach: Counts reflect the current view. If filtered by File A, count for File B is hidden or 0.
-            // Actually, for the File list specifically, we want valid counts for all files.
-            logs.forEach(log => {
-                if (log.fileName) {
-                    // We need to NOT overwrite the "increment" logic if we want consistency.
-                    // A cleaner way for Facets is: Counts are "hits if this filter were applied" (expensive) or "hits in current result".
-                    // Let's stick to "hits in current filtered set" for metadata, but "All available" for Files list?
-                    // Currently I used `sourceLogs` (filtered by file). 
-                    // This means File B won't be in `sourceLogs`.
-                    // So we must manually add File B to the list.
-                }
-            });
-        }
-
         // Re-populate fileNames from ALL logs strictly for the list
         const allFiles = new Set<string>();
         logs.forEach(l => { if (l.fileName) allFiles.add(l.fileName); });
-
-        // Recalculate File counts strictly based on Global logs? Or based on other filters?
-        // Let's keep it simple: Correlation Data assumes context of Selected Files.
-        // Exception: The File List itself needs to show all files.
 
         return {
             correlationData: {
@@ -467,9 +505,9 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
                 callIds: Array.from(callIds).sort(),
                 fileNames: Array.from(allFiles).sort()
             },
-            correlationCounts: counts // Note: Counts for non-selected files will be 0 or missing in this object.
+            correlationCounts: counts
         };
-    }, [logs, indexedDBLogs, useIndexedDBMode, activeCorrelations]);
+    }, [logs, useIndexedDBMode, correlationDataState, correlationCountsState, activeCorrelations]);
 
     // Phase 2 Optimization: Pre-compute correlation indexes and lowercase filter text outside the filter loop
     const correlationIndexes = useMemo(() => {
