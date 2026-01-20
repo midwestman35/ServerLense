@@ -99,6 +99,8 @@ interface LogContextType extends LogState {
         timestampRange?: { start: number; end: number };
         limit?: number;
     }) => Promise<LogEntry[]>;
+    clearAllData: () => Promise<void>;
+    enableIndexedDBMode: () => Promise<void>;
 }
 
 const LogContext = createContext<LogContextType | null>(null);
@@ -433,25 +435,52 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
                     dbManager.getUniqueValues('fileName')
                 ]);
 
+                const reportIds = Array.from(reportIdsSet).sort();
+                const operatorIds = Array.from(operatorIdsSet).sort();
+                const extensionIds = Array.from(extensionIdsSet).sort();
+                const stationIds = Array.from(stationIdsSet).sort();
+                const callIds = Array.from(callIdsSet).sort();
+                const fileNames = Array.from(fileNamesSet).sort();
+
                 setCorrelationDataState({
-                    reportIds: Array.from(reportIdsSet).sort(),
-                    operatorIds: Array.from(operatorIdsSet).sort(),
-                    extensionIds: Array.from(extensionIdsSet).sort(),
-                    stationIds: Array.from(stationIdsSet).sort(),
-                    callIds: Array.from(callIdsSet).sort(),
-                    fileNames: Array.from(fileNamesSet).sort()
+                    reportIds,
+                    operatorIds,
+                    extensionIds,
+                    stationIds,
+                    callIds,
+                    fileNames
                 });
 
-                // For counts, we'd need to query with filters - for now, use empty counts
-                // TODO: Implement efficient counting with IndexedDB queries
-                setCorrelationCountsState({});
+                // Compute counts from the loaded indexedDBLogs
+                // This is approximate but better than showing 0
+                const counts: Record<string, number> = {};
+                
+                // Use totalLogCount divided by unique values as approximate count
+                // Or compute from indexedDBLogs if available
+                if (indexedDBLogs.length > 0) {
+                    indexedDBLogs.forEach(log => {
+                        if (log.reportId) counts[`report:${log.reportId}`] = (counts[`report:${log.reportId}`] || 0) + 1;
+                        if (log.operatorId) counts[`operator:${log.operatorId}`] = (counts[`operator:${log.operatorId}`] || 0) + 1;
+                        if (log.extensionId) counts[`extension:${log.extensionId}`] = (counts[`extension:${log.extensionId}`] || 0) + 1;
+                        if (log.stationId) counts[`station:${log.stationId}`] = (counts[`station:${log.stationId}`] || 0) + 1;
+                        if (log.callId) counts[`callId:${log.callId}`] = (counts[`callId:${log.callId}`] || 0) + 1;
+                        if (log.fileName) counts[`file:${log.fileName}`] = (counts[`file:${log.fileName}`] || 0) + 1;
+                    });
+                } else {
+                    // Show total count for each file if we don't have detailed counts
+                    fileNames.forEach(fileName => {
+                        counts[`file:${fileName}`] = Math.round(totalLogCount / fileNames.length);
+                    });
+                }
+                
+                setCorrelationCountsState(counts);
             } catch (error) {
                 console.error('Failed to load correlation data from IndexedDB:', error);
             }
         };
 
         loadCorrelationData();
-    }, [useIndexedDBMode]);
+    }, [useIndexedDBMode, indexedDBLogs, totalLogCount]);
 
     // Computed unique IDs and Counts for Sidebar (for in-memory mode)
     const { correlationData, correlationCounts } = useMemo(() => {
@@ -677,38 +706,61 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
     // causing all consuming components to re-render unnecessarily
     // Note: Setters from useState are stable and don't need to be in dependencies
     // Callbacks wrapped in useCallback are also stable
-    // Enhanced setLogs that detects IndexedDB mode
-    const enhancedSetLogs = useCallback((newLogs: LogEntry[]) => {
-        setLogs(newLogs);
+    // Clear all data including IndexedDB
+    const clearAllData = useCallback(async () => {
+        // Clear IndexedDB first
+        try {
+            await dbManager.clearAll();
+        } catch (error) {
+            console.error('Failed to clear IndexedDB:', error);
+        }
         
-        // If logs array is empty, check if we should switch to IndexedDB mode
-        if (newLogs.length === 0) {
-            dbManager.getTotalCount().then(count => {
-                if (count > 0) {
-                    setUseIndexedDBMode(true);
-                    setTotalLogCount(count);
-                    // Load initial batch from IndexedDB
-                    dbManager.getMetadata().then(metadata => {
-                        if (metadata) {
-                            dbManager.getLogsByTimestampRange(
-                                metadata.dateRange.min,
-                                metadata.dateRange.max,
-                                1000
-                            ).then(initialLogs => {
-                                setIndexedDBLogs(initialLogs.sort((a, b) => a.timestamp - b.timestamp));
-                            });
-                        }
-                    });
-                } else {
-                    setUseIndexedDBMode(false);
-                    setTotalLogCount(0);
-                    setIndexedDBLogs([]);
-                }
-            });
-        } else {
-            // If setting logs directly (small files), disable IndexedDB mode
-            setUseIndexedDBMode(false);
-            setIndexedDBLogs([]);
+        // Clear all state
+        setLogs([]);
+        setIndexedDBLogs([]);
+        setUseIndexedDBMode(false);
+        setTotalLogCount(0);
+        setCorrelationDataState({
+            reportIds: [],
+            operatorIds: [],
+            extensionIds: [],
+            stationIds: [],
+            callIds: [],
+            fileNames: []
+        });
+        setCorrelationCountsState({});
+    }, []);
+
+    // Enhanced setLogs that detects IndexedDB mode
+    const enhancedSetLogs = useCallback((newLogs: LogEntry[], clearMode: boolean = false) => {
+        // If clearMode is true, clear everything including IndexedDB
+        if (clearMode || newLogs.length === 0) {
+            clearAllData();
+            return;
+        }
+        
+        // Setting logs directly (small files) - disable IndexedDB mode
+        setLogs(newLogs);
+        setUseIndexedDBMode(false);
+        setIndexedDBLogs([]);
+    }, [clearAllData]);
+    
+    // Function to trigger IndexedDB mode after parsing completes
+    const enableIndexedDBMode = useCallback(async () => {
+        const count = await dbManager.getTotalCount();
+        if (count > 0) {
+            setUseIndexedDBMode(true);
+            setTotalLogCount(count);
+            // Load initial batch from IndexedDB
+            const metadata = await dbManager.getMetadata();
+            if (metadata) {
+                const initialLogs = await dbManager.getLogsByTimestampRange(
+                    metadata.dateRange.min,
+                    metadata.dateRange.max,
+                    5000 // Load 5k logs initially
+                );
+                setIndexedDBLogs(initialLogs.sort((a, b) => a.timestamp - b.timestamp));
+            }
         }
     }, []);
     
@@ -777,7 +829,9 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
         // IndexedDB support (for large files)
         useIndexedDBMode,
         totalLogCount,
-        loadLogsFromIndexedDB
+        loadLogsFromIndexedDB,
+        clearAllData,
+        enableIndexedDBMode
     }), [
         // Only include values that actually change and affect consumers
         logs,

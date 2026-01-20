@@ -6,7 +6,7 @@ import { validateFile, exceedsCriticalSize, estimateMemoryUsage, formatFileSize 
 import type { LogEntry } from '../types';
 
 const FileUploader = () => {
-    const { logs, setLogs, setLoading, setSelectedLogId, parsingProgress, setParsingProgress } = useLogContext();
+    const { logs, setLogs, setLoading, setSelectedLogId, parsingProgress, setParsingProgress, enableIndexedDBMode } = useLogContext();
     const [fileError, setFileError] = useState<string | null>(null);
     const [fileWarning, setFileWarning] = useState<string | null>(null);
 
@@ -93,9 +93,8 @@ const FileUploader = () => {
                 }
                 
                 // For IndexedDB mode, logs are already stored in IndexedDB
-                // Trigger a reload by clearing logs and letting LogContext detect IndexedDB mode
-                setLogs([]); // Clear in-memory logs
-                // LogContext will detect IndexedDB has data and switch to IndexedDB mode
+                // Trigger IndexedDB mode to load the data
+                await enableIndexedDBMode();
             } else {
                 // Small files - use traditional parsing
                 for (let i = 0; i < validationResults.length; i++) {

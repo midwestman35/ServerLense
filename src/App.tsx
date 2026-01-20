@@ -25,7 +25,6 @@ const MainLayout = () => {
     setFilterText,
     activeCallFlowId,
     setActiveCallFlowId,
-
     activeCorrelations,
     setActiveCorrelations,
     toggleCorrelation,
@@ -36,7 +35,8 @@ const MainLayout = () => {
     jumpState,
     setJumpState,
     setScrollTargetTimestamp,
-    filterText
+    filterText,
+    clearAllData
   } = useLogContext();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -120,8 +120,13 @@ const MainLayout = () => {
     }
   };
 
-  const handleClearLogs = () => {
-    setLogs([]);
+  const handleClearLogs = async () => {
+    // Use clearAllData to clear both in-memory and IndexedDB data
+    if (clearAllData) {
+      await clearAllData();
+    } else {
+      setLogs([]);
+    }
     setSelectedLogId(null);
     setActiveCallFlowId(null);
     setFileError(null);
