@@ -12,6 +12,13 @@ interface ChangelogEntry {
 // Latest changelog entries - update this when new features are added
 const changelogEntries: ChangelogEntry[] = [
   {
+    version: '1.3.1',
+    date: '2026-01-20',
+    fixes: [
+      '⏰ Fixed timestamp parsing with milliseconds - Logs with comma-separated milliseconds (e.g., "5:04:57 AM,388") now display correct timestamps instead of file upload time'
+    ]
+  },
+  {
     version: '1.3.0',
     date: '2025-01-18',
     features: [
