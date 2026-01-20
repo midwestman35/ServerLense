@@ -410,21 +410,28 @@ This document provides a detailed cost analysis for implementing ServerLense wit
 
 ## Recommendations
 
+### For NocLense Integration (Recommended)
+- **Vercel Pro**: $27.50-47.50/month
+- **Best integration** with existing deployment
+- **No server management** required
+- **Same platform** as frontend
+- **Automatic scaling** and edge optimization
+
 ### For Development/Testing
-- **Self-Hosted VPS**: $48/month
-- **Best value**, full control
+- **Vercel Pro**: $27.50/month (same as production)
+- **Self-Hosted VPS**: $48/month (if you need more control)
 
 ### For Production (Low-Medium Load)
-- **AWS t3.xlarge + EC2 DB**: $208/month
-- **Good balance** of cost and managed services
+- **Vercel Pro**: $47.50/month (recommended)
+- **AWS t3.xlarge + EC2 DB**: $208/month (if you need longer timeouts)
 
 ### For Production (High Load)
-- **AWS Reserved Instances**: $135/month
-- **Best performance** with cost optimization
+- **Vercel Enterprise**: Custom pricing (typically $400+/month)
+- **AWS Reserved Instances**: $135/month (if cost is concern)
 
 ### For Cost-Conscious Deployments
-- **Self-Hosted Dedicated**: $90/month
-- **Maximum value** if you can manage infrastructure
+- **Vercel Pro**: $27.50/month (best value for serverless)
+- **Self-Hosted Dedicated**: $90/month (if you can manage infrastructure)
 
 ---
 
