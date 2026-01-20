@@ -103,12 +103,12 @@ This document provides a detailed cost analysis for implementing ServerLense wit
   - 60s function timeout
   - 50MB max request body
   - Unlimited serverless functions
-  - Vercel Postgres included (256MB free, then $0.10/GB)
   - Vercel Blob Storage ($0.15/GB stored, $0.01/GB egress)
 - **Additional Costs**:
-  - Postgres: ~$5-20/month (for 50-200GB)
+  - **Neon Postgres**: Free (3GB) or ~$19/month (10GB) or ~$69/month (50GB)
+  - **Supabase Postgres**: Free (500MB) or ~$25/month (8GB)
   - **Blob Storage: ~$0-2/month** (temporary only - files deleted after parsing)
-- **Total**: **~$25-42/month**
+- **Total**: **~$20-42/month** (depending on database choice)
 
 **Note**: Blob Storage costs are minimal because files are deleted immediately after parsing. Only temporary storage during parsing is needed.
 
@@ -413,26 +413,31 @@ This document provides a detailed cost analysis for implementing ServerLense wit
 ## Recommendations
 
 ### For NocLense Integration (Recommended)
-- **Vercel Pro**: $27.50-47.50/month
+- **Vercel Pro + Neon**: $20-91/month (depending on database size)
+- **Vercel Pro + Supabase**: $20-47/month (better for smaller databases)
 - **Best integration** with existing deployment
 - **No server management** required
 - **Same platform** as frontend
 - **Automatic scaling** and edge optimization
 
 ### For Development/Testing
-- **Vercel Pro**: $27.50/month (same as production)
+- **Vercel Pro + Neon Free**: $20/month (3GB database)
+- **Vercel Pro + Supabase Free**: $20/month (500MB database)
 - **Self-Hosted VPS**: $48/month (if you need more control)
 
 ### For Production (Low-Medium Load)
-- **Vercel Pro**: $47.50/month (recommended)
+- **Vercel Pro + Supabase Pro**: $45/month (8GB database, recommended)
+- **Vercel Pro + Neon Launch**: $39/month (10GB database)
 - **AWS t3.xlarge + EC2 DB**: $208/month (if you need longer timeouts)
 
 ### For Production (High Load)
+- **Vercel Pro + Neon Scale**: $89/month (50GB database)
 - **Vercel Enterprise**: Custom pricing (typically $400+/month)
 - **AWS Reserved Instances**: $135/month (if cost is concern)
 
 ### For Cost-Conscious Deployments
-- **Vercel Pro**: $27.50/month (best value for serverless)
+- **Vercel Pro + Neon Free**: $20/month (best value, 3GB limit)
+- **Vercel Pro + Supabase Free**: $20/month (500MB limit)
 - **Self-Hosted Dedicated**: $90/month (if you can manage infrastructure)
 
 ---
@@ -469,29 +474,37 @@ This document provides a detailed cost analysis for implementing ServerLense wit
 
 ## Conclusion
 
-ServerLense provides significant performance benefits but at an increased cost of $27.50-215/month for infrastructure. 
+ServerLense provides significant performance benefits but at an increased cost of $20-215/month for infrastructure. 
 
 **Best Options:**
-1. **Vercel Pro** ($27.50-47.50/month) - **Recommended** for seamless integration with existing NocLense deployment
+1. **Vercel Pro + Supabase** ($20-47/month) - **Recommended** for seamless integration
    - Same platform as frontend
    - No server management
    - Automatic scaling
    - Best developer experience
+   - Good free tier for development
 
-2. **Self-Hosted VPS** ($48-105/month) - Best for cost-conscious deployments
+2. **Vercel Pro + Neon** ($20-91/month) - Best for serverless Postgres
+   - True serverless Postgres
+   - Auto-scaling compute
+   - Pay-per-use model
+   - Database branching feature
+
+3. **Self-Hosted VPS** ($48-105/month) - Best for cost-conscious deployments
    - Full control
    - No vendor lock-in
    - Requires more management
 
-3. **AWS Reserved Instances** ($135-215/month) - Best for enterprise deployments
+4. **AWS Reserved Instances** ($135-215/month) - Best for enterprise deployments
    - Managed services
    - High reliability
    - More expensive
 
 **Recommendation**: 
-- **Start with Vercel Pro** ($27.50-47.50/month) for best integration and developer experience
+- **Start with Vercel Pro + Supabase Free** ($20/month) for development
+- **Production: Vercel Pro + Supabase Pro** ($45/month) for 8GB database
+- **For larger databases: Vercel Pro + Neon Scale** ($89/month) for 50GB
 - If cost is primary concern, use **Self-Hosted VPS** ($48/month)
-- For enterprise needs, consider **AWS Reserved Instances** ($135/month)
 
 **Vercel Advantages:**
 - ✅ Same deployment platform as NocLense frontend

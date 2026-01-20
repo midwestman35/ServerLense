@@ -30,15 +30,41 @@ This checklist outlines all steps that must be completed **before** beginning th
 
 ---
 
-## ✅ Vercel Postgres Database Setup
+## ✅ Postgres Database Setup (Neon Recommended)
 
-### 4. Create Postgres Database
-- [ ] **Create Vercel Postgres database**
-  - Go to Vercel Dashboard → Storage → Create Database
-  - Select "Postgres"
-  - Name: `serverlense-db` (or your preferred name)
+**Note**: Vercel Postgres is no longer available. Use Neon (recommended) or another Postgres provider.
+
+### Option A: Neon (Recommended - Serverless Postgres)
+
+### 4. Create Neon Database
+- [ ] **Sign up for Neon account**
+  - Go to [neon.tech](https://neon.tech)
+  - Free tier available (good for development)
+  - [Sign up here](https://neon.tech/signup)
+- [ ] **Create new Neon project**
+  - Project name: `serverlense` (or your preferred name)
   - Region: Choose closest to your users
-  - [Create database](https://vercel.com/docs/storage/vercel-postgres/quickstart)
+  - Postgres version: 15 or 16 (recommended)
+- [ ] **Get connection string**
+  - Copy the connection string from Neon dashboard
+  - Format: `postgresql://user:password@host/database?sslmode=require`
+  - [Neon Quickstart](https://neon.tech/docs/quickstart)
+
+### Option B: Supabase (Alternative)
+
+### 4. Create Supabase Database
+- [ ] **Sign up for Supabase account**
+  - Go to [supabase.com](https://supabase.com)
+  - Free tier available
+  - [Sign up here](https://supabase.com/dashboard)
+- [ ] **Create new Supabase project**
+  - Project name: `serverlense`
+  - Database password: (save securely)
+  - Region: Choose closest to your users
+- [ ] **Get connection string**
+  - Go to Project Settings → Database
+  - Copy connection string (URI format)
+  - [Supabase Docs](https://supabase.com/docs/guides/database/connecting-to-postgres)
 
 ### 5. Database Schema Migration
 - [ ] **Run initial schema migration**
@@ -88,11 +114,19 @@ This checklist outlines all steps that must be completed **before** beginning th
 - [ ] **Test database connection**
 
 ### 6. Environment Variables
-- [ ] **Add Postgres connection string**
-  - Variable name: `POSTGRES_URL`
-  - Value: Auto-populated by Vercel (from database settings)
+- [ ] **Add Postgres connection string to Vercel**
+  - Variable name: `POSTGRES_URL` (or `DATABASE_URL`)
+  - Value: Connection string from Neon/Supabase (from step 4)
   - Add to: Production, Preview, Development environments
   - [How to add env vars](https://vercel.com/docs/projects/environment-variables)
+- [ ] **For Neon**: Connection string format
+  ```
+  postgresql://user:password@ep-xxx.region.aws.neon.tech/dbname?sslmode=require
+  ```
+- [ ] **For Supabase**: Connection string format
+  ```
+  postgresql://postgres:[PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres
+  ```
 
 ---
 
@@ -166,11 +200,22 @@ This checklist outlines all steps that must be completed **before** beginning th
 ### 13. Install Dependencies
 - [ ] **Install Vercel packages**
   ```bash
-  npm install @vercel/node @vercel/postgres @vercel/blob
+  npm install @vercel/node @vercel/blob
+  ```
+- [ ] **Install Postgres client** (choose one)
+  ```bash
+  # Option A: Neon (recommended - serverless)
+  npm install @neondatabase/serverless
+  
+  # Option B: Supabase
+  npm install @supabase/supabase-js
+  
+  # Option C: Standard pg (works with any Postgres)
+  npm install pg @types/pg
   ```
 - [ ] **Install TypeScript types** (if using TypeScript)
   ```bash
-  npm install -D @vercel/types
+  npm install -D @vercel/types @types/pg
   ```
 - [ ] **Verify `package.json` updated**
 
@@ -192,6 +237,7 @@ This checklist outlines all steps that must be completed **before** beginning th
     },
     "env": {
       "POSTGRES_URL": "@postgres-url",
+      "DATABASE_URL": "@postgres-url",  // Alternative name (some tools use this)
       "BLOB_READ_WRITE_TOKEN": "@blob-token"
     }
   }
@@ -214,19 +260,55 @@ This checklist outlines all steps that must be completed **before** beginning th
 
 ### 16. Test Database Connection
 - [ ] **Create test script** (`scripts/test-db.ts`)
+  
+  **For Neon (using @neondatabase/serverless):**
   ```typescript
-  import { sql } from '@vercel/postgres';
+  import { neon } from '@neondatabase/serverless';
+  const sql = neon(process.env.POSTGRES_URL!);
   
   async function testConnection() {
     try {
       const result = await sql`SELECT NOW()`;
-      console.log('Database connected:', result.rows[0]);
+      console.log('Database connected:', result);
     } catch (error) {
       console.error('Database connection failed:', error);
     }
   }
   
   testConnection();
+  ```
+  
+  **For Supabase (using @supabase/supabase-js or pg):**
+  ```typescript
+  import { createClient } from '@supabase/supabase-js';
+  // OR use pg library directly
+  import pg from 'pg';
+  const { Pool } = pg;
+  
+  const pool = new Pool({
+    connectionString: process.env.POSTGRES_URL
+  });
+  
+  async function testConnection() {
+    try {
+      const result = await pool.query('SELECT NOW()');
+      console.log('Database connected:', result.rows[0]);
+    } catch (error) {
+      console.error('Database connection failed:', error);
+    } finally {
+      await pool.end();
+    }
+  }
+  
+  testConnection();
+  ```
+- [ ] **Install database client**
+  ```bash
+  # For Neon
+  npm install @neondatabase/serverless
+  
+  # For Supabase (or use pg)
+  npm install pg @types/pg
   ```
 - [ ] **Run test script**
   ```bash
@@ -342,10 +424,15 @@ This checklist outlines all steps that must be completed **before** beginning th
 
 ### 25. Estimate Initial Costs
 - [ ] **Calculate expected costs**
-  - Pro Plan: $20/month
-  - Postgres (200GB): ~$20/month
+  - Vercel Pro Plan: $20/month
+  - **Neon Postgres**: Free tier (3GB) or ~$19/month (100GB) or ~$69/month (200GB)
+  - **Supabase Postgres**: Free tier (500MB) or ~$25/month (8GB) or custom pricing
   - Blob Storage (temporary): ~$0-2/month
-  - **Total: ~$42/month**
+  - **Total: ~$20-42/month** (depending on database choice and size)
+- [ ] **Compare providers**:
+  - **Neon**: Best for serverless, auto-scaling, pay-per-use
+  - **Supabase**: Best for full-featured platform (includes auth, storage, etc.)
+  - **AWS RDS**: Best for enterprise, more complex setup
 - [ ] **Verify budget approval**
 
 ---

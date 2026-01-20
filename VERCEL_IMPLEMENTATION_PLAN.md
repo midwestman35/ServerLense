@@ -160,12 +160,23 @@ export const parseLogFile = async (blobUrl: string, ...) => {
 }
 ```
 
-#### 1.3 Set Up Vercel Postgres
+#### 1.3 Set Up Postgres Database (Neon Recommended)
+
+**Note**: Vercel Postgres is no longer available. Use Neon (recommended) or Supabase.
+
 **Tasks:**
+- [ ] Sign up for Neon account (or Supabase)
+- [ ] Create database project
+- [ ] Get connection string
 - [ ] Create database schema (migration script)
-- [ ] Set up connection pooling
+- [ ] Set up connection pooling (Neon handles this automatically)
 - [ ] Create indexes for performance
 - [ ] Test connection
+
+**Database Options:**
+- **Neon** (Recommended): Serverless Postgres, auto-scaling, pay-per-use
+- **Supabase**: Full-featured platform with Postgres
+- **AWS RDS**: Enterprise option, more complex
 
 **Schema:**
 ```sql

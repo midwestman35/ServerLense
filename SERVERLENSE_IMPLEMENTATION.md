@@ -728,15 +728,29 @@ serverlense/
 #### Step 2: Install Vercel Dependencies
 
 ```bash
-npm install @vercel/node @vercel/postgres @vercel/blob
+# Vercel packages
+npm install @vercel/node @vercel/blob
+
+# Postgres client (choose one)
+# Option A: Neon (recommended)
+npm install @neondatabase/serverless
+
+# Option B: Standard pg (works with any Postgres)
+npm install pg @types/pg
+
+# TypeScript types
 npm install -D @vercel/types
 ```
 
-#### Step 3: Configure Vercel Postgres
+#### Step 3: Configure Postgres Database
+
+**Option A: Neon (Recommended)**
 
 ```typescript
 // lib/db.ts
-import { sql } from '@vercel/postgres';
+import { neon } from '@neondatabase/serverless';
+
+const sql = neon(process.env.POSTGRES_URL!);
 
 export async function initDatabase() {
   await sql`
@@ -771,6 +785,42 @@ export async function initDatabase() {
 }
 
 export { sql };
+```
+
+**Option B: Supabase or Standard Postgres (using pg)**
+
+```typescript
+// lib/db.ts
+import pg from 'pg';
+const { Pool } = pg;
+
+const pool = new Pool({
+  connectionString: process.env.POSTGRES_URL,
+  ssl: { rejectUnauthorized: false } // Required for Neon/Supabase
+});
+
+export async function initDatabase() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS logs (
+      id SERIAL PRIMARY KEY,
+      timestamp BIGINT NOT NULL,
+      -- ... same schema as above
+    )
+  `);
+  
+  // Create indexes
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp)`);
+  // ... more indexes
+}
+
+export const sql = {
+  query: (query: string, params?: any[]) => pool.query(query, params),
+  // Helper for template literals (if needed)
+  async template(strings: TemplateStringsArray, ...values: any[]) {
+    const query = strings.reduce((acc, str, i) => acc + str + (values[i] || ''), '');
+    return pool.query(query);
+  }
+};
 ```
 
 #### Step 4: Create Parsing API Endpoint
