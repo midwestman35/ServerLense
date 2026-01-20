@@ -12,6 +12,15 @@ interface ChangelogEntry {
 // Latest changelog entries - update this when new features are added
 const changelogEntries: ChangelogEntry[] = [
   {
+    version: '1.3.2',
+    date: '2026-01-20',
+    features: [
+      '🔍 SIP Filter Dropdown - Dynamic dropdown for filtering by specific SIP methods/codes when Homer logs are loaded',
+      '🎯 Intelligent Method Extraction - Automatically detects and lists all unique SIP response codes and request methods from Homer logs',
+      '✨ Normalized Response Codes - Duplicate variants (e.g., "100 trying" variations) are normalized to single entries for cleaner filtering'
+    ]
+  },
+  {
     version: '1.3.1',
     date: '2026-01-20',
     fixes: [

@@ -1,7 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useLogContext } from '../contexts/LogContext';
 import { Search, Check, X, Star } from 'lucide-react';
 import SearchHistoryDropdown from './SearchHistoryDropdown';
+import SipFilterDropdown from './SipFilterDropdown';
 
 const FilterBar = () => {
     const {
@@ -9,6 +10,8 @@ const FilterBar = () => {
         setFilterText,
         isSipFilterEnabled,
         setIsSipFilterEnabled,
+        selectedSipMethod,
+        setSelectedSipMethod,
         logs,
         filteredLogs,
         isTextWrapEnabled,
@@ -108,6 +111,34 @@ const FilterBar = () => {
     const wrapText = isTextWrapEnabled;
     const sipFilterEnabled = isSipFilterEnabled;
 
+    // Detect if Homer logs are present and extract available SIP methods
+    const hasHomerLogs = useMemo(() => {
+        return logs.some(log => log.component === 'Homer SIP');
+    }, [logs]);
+
+    const availableSipMethods = useMemo(() => {
+        if (!hasHomerLogs) return [];
+        const methods = new Set<string>();
+        
+        logs.forEach(log => {
+            if (log.component === 'Homer SIP' && log.sipMethod) {
+                // Normalize SIP response codes (e.g., "100 trying" and "100 trying -- your call is important to us" -> "100 Trying")
+                // Extract numeric code and first word of reason phrase
+                const responseMatch = log.sipMethod.match(/^(\d{3})\s+(\w+)(?:\s+.*)?$/i);
+                if (responseMatch) {
+                    const code = responseMatch[1];
+                    const firstWord = responseMatch[2].charAt(0).toUpperCase() + responseMatch[2].slice(1).toLowerCase();
+                    const normalized = `${code} ${firstWord}`;
+                    methods.add(normalized);
+                } else {
+                    // For request methods (INVITE, ACK, etc.), add as-is
+                    methods.add(log.sipMethod);
+                }
+            }
+        });
+        return Array.from(methods);
+    }, [logs, hasHomerLogs]);
+
     return (
         <div className="flex items-center gap-3 w-full p-2 relative z-50" ref={dropdownRef}>
             <div className="relative flex-grow max-w-2xl">
@@ -166,28 +197,44 @@ const FilterBar = () => {
 
             {/* Toggles */}
             <div className="flex items-center gap-4 shrink-0">
-                <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer hover:text-[var(--text-primary)] transition-colors select-none group">
-                    <div
-                        onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setIsSipFilterEnabled(!isSipFilterEnabled);
+                {hasHomerLogs && availableSipMethods.length > 0 ? (
+                    // Show dropdown when Homer logs are detected
+                    <SipFilterDropdown
+                        availableMethods={availableSipMethods}
+                        selectedMethod={selectedSipMethod}
+                        onSelect={(method) => {
+                            setSelectedSipMethod(method);
+                            // Auto-enable SIP filter when a method is selected
+                            if (method !== null) {
+                                setIsSipFilterEnabled(true);
+                            }
                         }}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
+                    />
+                ) : (
+                    // Show toggle for non-Homer logs or when no Homer logs present
+                    <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer hover:text-[var(--text-primary)] transition-colors select-none group">
+                        <div
+                            onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
                                 setIsSipFilterEnabled(!isSipFilterEnabled);
-                            }
-                        }}
-                        className={`w-8 h-4 rounded-full p-0.5 transition-colors duration-200 ease-in-out ${sipFilterEnabled ? 'bg-[var(--accent-blue)]' : 'bg-[var(--text-secondary)]/30'}`}
-                    >
-                        <div className={`w-3 h-3 bg-[var(--card-bg)] rounded-full shadow-sm transform transition-transform duration-200 ${sipFilterEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
-                    </div>
-                    <span className="font-medium group-hover:text-[var(--accent-blue)] transition-colors">SIP Filter</span>
-                </label>
+                            }}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    setIsSipFilterEnabled(!isSipFilterEnabled);
+                                }
+                            }}
+                            className={`w-8 h-4 rounded-full p-0.5 transition-colors duration-200 ease-in-out ${sipFilterEnabled ? 'bg-[var(--accent-blue)]' : 'bg-[var(--text-secondary)]/30'}`}
+                        >
+                            <div className={`w-3 h-3 bg-[var(--card-bg)] rounded-full shadow-sm transform transition-transform duration-200 ${sipFilterEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                        </div>
+                        <span className="font-medium group-hover:text-[var(--accent-blue)] transition-colors">SIP Filter</span>
+                    </label>
+                )}
 
                 <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)] cursor-pointer hover:text-[var(--text-primary)] transition-colors select-none group">
                     <div

@@ -16,6 +16,8 @@ interface LogContextType extends LogState {
     setFilterText: (text: string) => void;
     isSipFilterEnabled: boolean;
     setIsSipFilterEnabled: (enabled: boolean) => void;
+    selectedSipMethod: string | null;
+    setSelectedSipMethod: (method: string | null) => void;
     // Deprecated alias aliases kept for compatibility if needed, otherwise removed
     smartFilterActive: boolean;
     setSmartFilterActive: (active: boolean) => void;
@@ -104,6 +106,7 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
     const [parsingProgress, setParsingProgress] = useState<number>(0); // Progress from 0 to 1
     const [filterText, setFilterText] = useState('');
     const [isSipFilterEnabled, setIsSipFilterEnabled] = useState(false);
+    const [selectedSipMethod, setSelectedSipMethod] = useState<string | null>(null);
     const [selectedLogId, setSelectedLogId] = useState<number | null>(null);
     const [searchHistory, setSearchHistory] = useState<string[]>([]);
 
@@ -353,6 +356,29 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
             // SIP Filter (Show Only SIP)
             if (isSipFilterEnabled && !log.isSip) return false;
 
+            // SIP Method Filter (when specific method selected)
+            // If a method is selected, only show SIP logs matching that method
+            // Normalize comparison: "100 trying" and "100 trying -- your call is important to us" should both match "100 Trying"
+            if (selectedSipMethod !== null) {
+                if (!log.isSip || !log.sipMethod) return false;
+                
+                // Normalize both values for comparison
+                const normalizeMethod = (method: string): string => {
+                    const responseMatch = method.match(/^(\d{3})\s+(\w+)(?:\s+.*)?$/i);
+                    if (responseMatch) {
+                        const code = responseMatch[1];
+                        const firstWord = responseMatch[2].charAt(0).toUpperCase() + responseMatch[2].slice(1).toLowerCase();
+                        return `${code} ${firstWord}`;
+                    }
+                    return method; // Request methods (INVITE, ACK, etc.) remain unchanged
+                };
+                
+                const normalizedSelected = normalizeMethod(selectedSipMethod);
+                const normalizedLog = normalizeMethod(log.sipMethod);
+                
+                if (normalizedLog !== normalizedSelected) return false;
+            }
+
             // Phase 2 Optimization: Use pre-computed lowercase strings from parsing for O(1) string operations
             // This eliminates toLowerCase() calls during filtering (major performance win for 100k+ logs)
             if (lowerFilterText) {
@@ -390,7 +416,7 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
         });
 
         return result;
-    }, [logs, selectedLogId, correlationIndexes, selectedComponentFilter, isSipFilterEnabled, lowerFilterText, sortConfig, isShowFavoritesOnly, favoriteLogIds]);
+    }, [logs, selectedLogId, correlationIndexes, selectedComponentFilter, isSipFilterEnabled, selectedSipMethod, lowerFilterText, sortConfig, isShowFavoritesOnly, favoriteLogIds]);
 
     // Phase 2 Optimization: Wrap event handlers in useCallback
     const addToSearchHistory = useCallback((term: string) => {
@@ -407,6 +433,7 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
     const clearAllFilters = useCallback(() => {
         setFilterText('');
         setIsSipFilterEnabled(false);
+        setSelectedSipMethod(null);
         setSelectedComponentFilter(null);
         setActiveCorrelations([]);
         setSelectedLogId(null);
@@ -429,6 +456,8 @@ export const LogProvider = ({ children }: { children: ReactNode }) => {
         setFilterText,
         isSipFilterEnabled,
         setIsSipFilterEnabled,
+        selectedSipMethod,
+        setSelectedSipMethod,
         smartFilterActive: isSipFilterEnabled, // Alias
         setSmartFilterActive: setIsSipFilterEnabled, // Alias
         filteredLogs,
