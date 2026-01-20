@@ -107,8 +107,10 @@ This document provides a detailed cost analysis for implementing ServerLense wit
   - Vercel Blob Storage ($0.15/GB stored, $0.01/GB egress)
 - **Additional Costs**:
   - Postgres: ~$5-20/month (for 50-200GB)
-  - Blob Storage: ~$5-15/month (for 30-100GB)
-- **Total**: **~$30-55/month**
+  - **Blob Storage: ~$0-2/month** (temporary only - files deleted after parsing)
+- **Total**: **~$25-42/month**
+
+**Note**: Blob Storage costs are minimal because files are deleted immediately after parsing. Only temporary storage during parsing is needed.
 
 **Option C: Enterprise Plan (Custom Pricing)**
 - **Cost**: **Custom** (typically $400+/month)

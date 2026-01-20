@@ -4,6 +4,12 @@
 
 This document outlines the implementation plan for migrating NocLense from client-side processing to Vercel serverless architecture. The migration will move log parsing, storage, and querying to serverless functions while maintaining the existing React UI.
 
+**Key Design Decision**: **Files are NOT stored long-term**. Uploaded files are:
+- Temporarily stored in Vercel Blob Storage for parsing only
+- Deleted immediately after parsing completes
+- Deleted when 'Clear' is used or session terminates
+- Only parsed log data is stored in Postgres database
+
 **Timeline**: 2 weeks  
 **Complexity**: Medium  
 **Risk**: Low (can deploy incrementally)
@@ -100,8 +106,8 @@ This document outlines the implementation plan for migrating NocLense from clien
 ```
 serverlense/
 ├── api/                    # Vercel serverless functions
-│   ├── parse.ts           # File parsing endpoint
-│   ├── parse-chunked.ts   # Chunked upload handler
+│   ├── parse.ts           # File parsing endpoint (deletes blob after parsing)
+│   ├── parse-chunked.ts   # Chunked upload handler (deletes blob after parsing)
 │   ├── logs/
 │   │   ├── index.ts       # GET /api/logs (query)
 │   │   └── [id].ts        # GET /api/logs/:id
@@ -110,15 +116,21 @@ serverlense/
 │   ├── timeline/
 │   │   └── index.ts       # GET /api/timeline (aggregated)
 │   └── clear/
-│       └── index.ts       # POST /api/clear
+│       └── index.ts       # POST /api/clear (deletes all blobs + logs)
 ├── lib/                    # Shared server-side code
 │   ├── parser.ts          # Ported parser (Node.js compatible)
 │   ├── db.ts              # Vercel Postgres client
-│   ├── blob.ts            # Vercel Blob client
+│   ├── blob.ts            # Vercel Blob client (with cleanup helpers)
 │   └── types.ts           # Shared types
 ├── src/                    # Existing React frontend (minimal changes)
 └── vercel.json            # Vercel configuration
 ```
+
+**File Storage Policy:**
+- Files uploaded to `temp/` prefix in Blob Storage
+- Deleted immediately after parsing
+- Deleted on `/api/clear` call
+- **No long-term file storage** - only parsed logs in Postgres
 
 #### 1.2 Port Parser to Node.js
 **Tasks:**
@@ -354,12 +366,14 @@ const filteredLogs = useMemo(() => {
 
 #### `/api/parse.ts`
 - [ ] Accept file upload (FormData)
-- [ ] Upload to Vercel Blob Storage
+- [ ] **Temporary**: Upload to Vercel Blob Storage (for parsing only)
 - [ ] Call parser with blob URL
 - [ ] Batch insert logs to Postgres (1000 at a time)
+- [ ] **Delete blob file immediately after parsing** (no long-term storage)
 - [ ] Return session ID and count
 - [ ] Handle errors gracefully
 - [ ] Add progress updates (WebSocket or polling)
+- [ ] **Cleanup**: Delete blob on error or completion
 
 #### `/api/logs/index.ts`
 - [ ] Accept query parameters (filters, pagination)
@@ -383,8 +397,9 @@ const filteredLogs = useMemo(() => {
 
 #### `/api/clear/index.ts`
 - [ ] Delete all logs from Postgres
-- [ ] Clear blob storage (optional)
+- [ ] **Delete all temporary blob files** (cleanup uploaded files)
 - [ ] Return success status
+- [ ] **Note**: Files are temporary - deleted after parsing or on clear
 
 ### Frontend (React Components)
 

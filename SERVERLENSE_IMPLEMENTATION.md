@@ -67,7 +67,7 @@ app.listen(3000);
 ```typescript
 // api/parse.ts
 import { VercelRequest, VercelResponse } from '@vercel/node';
-import { put } from '@vercel/blob';
+import { put, del } from '@vercel/blob';
 import { parseLogFile } from '../lib/parser';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -75,19 +75,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  let blobUrl: string | null = null;
+
   try {
     const file = req.body.file; // File from FormData
     
-    // Upload to Vercel Blob Storage for processing
-    const blob = await put(`logs/${Date.now()}-${file.name}`, file, {
+    // Upload to Vercel Blob Storage (temporary - for parsing only)
+    const blob = await put(`temp/${Date.now()}-${file.name}`, file, {
       access: 'public',
     });
+    blobUrl = blob.url;
 
     // Parse file (stream from blob URL)
     const result = await parseLogFile(blob.url);
     
-    res.json({ success: true, data: result, blobUrl: blob.url });
+    // IMPORTANT: Delete blob file immediately after parsing
+    // Files are not stored long-term - only parsed and stored in Postgres
+    await del(blob.url);
+    
+    res.json({ success: true, data: result });
   } catch (error) {
+    // Cleanup blob on error
+    if (blobUrl) {
+      await del(blobUrl).catch(() => {}); // Ignore cleanup errors
+    }
     res.status(500).json({ error: error.message });
   }
 }
@@ -101,6 +112,8 @@ export const config = {
 ```
 
 **Dependencies**
+
+**Option A: Traditional Server**
 ```json
 {
   "dependencies": {
@@ -109,6 +122,21 @@ export const config = {
     "cors": "^2.8.5",
     "pg": "^8.11.0",
     "better-sqlite3": "^9.0.0"
+  }
+}
+```
+
+**Option B: Vercel Serverless (Recommended)**
+```json
+{
+  "dependencies": {
+    "@vercel/node": "^3.0.0",
+    "@vercel/postgres": "^0.5.0",
+    "@vercel/blob": "^0.10.0"
+  },
+  "devDependencies": {
+    "@vercel/types": "^1.0.0",
+    "typescript": "^5.3.3"
   }
 }
 ```
@@ -630,24 +658,356 @@ router.get('/aggregates/timeline', async (req, res) => {
 
 ---
 
+## Vercel-Specific Implementation (Recommended)
+
+### Why Vercel?
+
+Since NocLense is already deployed on Vercel, ServerLense can leverage the same platform for seamless integration:
+
+- ✅ **Same Deployment Platform**: Frontend and backend in one project
+- ✅ **No Server Management**: Serverless functions handle everything
+- ✅ **Automatic Scaling**: Scales to zero when not in use
+- ✅ **Built-in CDN**: Edge-optimized API responses
+- ✅ **Easy Rollbacks**: Preview deployments and instant rollbacks
+- ✅ **Cost-Effective**: $27.50-47.50/month vs $128-215/month for traditional servers
+
+### Vercel Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Vercel Platform                      │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│  ┌──────────────┐         ┌──────────────────┐         │
+│  │   Frontend   │  API    │ Serverless Func  │         │
+│  │  (React)    │ ──────> │  /api/parse      │         │
+│  │             │         │  /api/logs       │         │
+│  └──────────────┘         └──────────────────┘         │
+│                                  │                       │
+│                                  │ Query                 │
+│                                  ▼                       │
+│                          ┌──────────────┐               │
+│                          │Vercel Postgres│              │
+│                          │  (Managed)    │               │
+│                          └──────────────┘               │
+│                                  │                       │
+│                                  │ Store                 │
+│                                  ▼                       │
+│                          ┌──────────────┐               │
+│                          │Vercel Blob   │               │
+│                          │  Storage     │               │
+│                          └──────────────┘               │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Vercel Implementation Steps
+
+#### Step 1: Set Up Vercel Project Structure
+
+```
+serverlense/
+├── api/
+│   ├── parse.ts              # Serverless function for parsing
+│   ├── parse-chunked.ts      # Chunked upload handler
+│   ├── logs/
+│   │   ├── index.ts          # GET /api/logs
+│   │   └── [id].ts           # GET /api/logs/:id
+│   ├── counts/
+│   │   └── index.ts          # GET /api/counts
+│   └── timeline/
+│       └── index.ts          # GET /api/timeline
+├── lib/
+│   ├── parser.ts             # Ported parser logic
+│   ├── db.ts                 # Vercel Postgres client
+│   └── blob.ts               # Vercel Blob client
+├── public/                   # Static assets (if any)
+├── vercel.json              # Vercel configuration
+└── package.json
+```
+
+#### Step 2: Install Vercel Dependencies
+
+```bash
+npm install @vercel/node @vercel/postgres @vercel/blob
+npm install -D @vercel/types
+```
+
+#### Step 3: Configure Vercel Postgres
+
+```typescript
+// lib/db.ts
+import { sql } from '@vercel/postgres';
+
+export async function initDatabase() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS logs (
+      id SERIAL PRIMARY KEY,
+      timestamp BIGINT NOT NULL,
+      raw_timestamp VARCHAR(255),
+      level VARCHAR(10) NOT NULL,
+      component VARCHAR(255),
+      display_component VARCHAR(255),
+      message TEXT,
+      display_message TEXT,
+      payload TEXT,
+      type VARCHAR(50),
+      is_sip BOOLEAN DEFAULT FALSE,
+      sip_method VARCHAR(255),
+      file_name VARCHAR(255),
+      file_color VARCHAR(7),
+      call_id VARCHAR(255),
+      report_id VARCHAR(255),
+      operator_id VARCHAR(255),
+      extension_id VARCHAR(255),
+      station_id VARCHAR(255),
+      created_at TIMESTAMP DEFAULT NOW()
+    )
+  `;
+  
+  // Create indexes
+  await sql`CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_logs_file_name ON logs(file_name)`;
+  // ... more indexes
+}
+
+export { sql };
+```
+
+#### Step 4: Create Parsing API Endpoint
+
+```typescript
+// api/parse.ts
+import { VercelRequest, VercelResponse } from '@vercel/node';
+import { put } from '@vercel/blob';
+import { parseLogFile } from '../lib/parser';
+import { sql } from '../lib/db';
+
+export const config = {
+  maxDuration: 60, // 60 seconds (Pro plan)
+  maxBodySize: '50mb', // 50MB (Pro plan)
+};
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    const file = req.body.file; // From FormData
+    
+    // Upload to Vercel Blob Storage
+    const blob = await put(`logs/${Date.now()}-${file.name}`, file, {
+      access: 'public',
+      addRandomSuffix: true,
+    });
+
+    // Parse file (stream from blob URL)
+    const logs = await parseLogFile(blob.url);
+    
+    // Store in Vercel Postgres (batch insert)
+    const values = logs.map(log => 
+      `(${log.timestamp}, '${log.level}', '${log.component}', ...)`
+    ).join(',');
+    
+    await sql`INSERT INTO logs (...) VALUES ${sql.unsafe(values)}`;
+    
+    res.json({ 
+      success: true, 
+      count: logs.length,
+      blobUrl: blob.url 
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+}
+```
+
+#### Step 5: Create Logs Query API
+
+```typescript
+// api/logs/index.ts
+import { VercelRequest, VercelResponse } from '@vercel/node';
+import { sql } from '../lib/db';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'GET') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const { offset = 0, limit = 1000, component, callId, fileName, search } = req.query;
+  
+  let query = sql`SELECT * FROM logs WHERE 1=1`;
+  const params: any[] = [];
+  
+  if (component) {
+    query = sql`${query} AND component = ${component}`;
+  }
+  
+  if (callId) {
+    query = sql`${query} AND call_id = ${callId}`;
+  }
+  
+  if (fileName) {
+    query = sql`${query} AND file_name = ${fileName}`;
+  }
+  
+  if (search) {
+    query = sql`${query} AND to_tsvector('english', message || ' ' || COALESCE(payload, '')) @@ plainto_tsquery('english', ${search})`;
+  }
+  
+  query = sql`${query} ORDER BY timestamp ASC LIMIT ${limit} OFFSET ${offset}`;
+  
+  const result = await query;
+  res.json({ logs: result.rows, total: result.rowCount });
+}
+```
+
+#### Step 6: Create Counts API
+
+```typescript
+// api/counts/index.ts
+import { VercelRequest, VercelResponse } from '@vercel/node';
+import { sql } from '../lib/db';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const { type } = req.query; // 'file', 'callId', 'report', etc.
+  
+  const columnMap: Record<string, string> = {
+    file: 'file_name',
+    callId: 'call_id',
+    report: 'report_id',
+    operator: 'operator_id',
+    extension: 'extension_id',
+    station: 'station_id'
+  };
+  
+  const column = columnMap[type as string];
+  if (!column) {
+    return res.status(400).json({ error: 'Invalid type' });
+  }
+  
+  const result = await sql`
+    SELECT ${sql.unsafe(column)} as value, COUNT(*) as count 
+    FROM logs 
+    WHERE ${sql.unsafe(column)} IS NOT NULL 
+    GROUP BY ${sql.unsafe(column)}
+    ORDER BY count DESC
+  `;
+  
+  res.json({ counts: result.rows });
+}
+```
+
+#### Step 7: Update Client to Use Vercel API
+
+```typescript
+// client/api.ts
+const API_BASE = '/api'; // Same domain, no CORS issues
+
+export async function uploadLogFile(file: File): Promise<number> {
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  const response = await fetch(`${API_BASE}/parse`, {
+    method: 'POST',
+    body: formData
+  });
+  
+  const { count } = await response.json();
+  return count;
+}
+
+export async function getLogs(filters: any, offset: number, limit: number) {
+  const params = new URLSearchParams({
+    offset: offset.toString(),
+    limit: limit.toString(),
+    ...filters
+  });
+  
+  const response = await fetch(`${API_BASE}/logs?${params}`);
+  return response.json();
+}
+```
+
+#### Step 8: Configure Vercel Project
+
+```json
+// vercel.json
+{
+  "functions": {
+    "api/parse.ts": {
+      "maxDuration": 60
+    },
+    "api/parse-chunked.ts": {
+      "maxDuration": 300
+    }
+  },
+  "env": {
+    "POSTGRES_URL": "@postgres-url",
+    "BLOB_READ_WRITE_TOKEN": "@blob-token"
+  }
+}
+```
+
+### Vercel Limitations & Workarounds
+
+**Limitation 1: Function Timeout**
+- **Hobby**: 10 seconds
+- **Pro**: 60 seconds
+- **Enterprise**: 300 seconds
+
+**Workaround**: For files >100MB or parsing >60s:
+- Use chunked uploads
+- Process in background with Vercel Cron Jobs
+- Split parsing into multiple function calls
+
+**Limitation 2: Request Body Size**
+- **Hobby**: 4.5MB
+- **Pro**: 50MB
+- **Enterprise**: 100MB
+
+**Workaround**: 
+- Upload to Vercel Blob Storage first
+- Pass blob URL to parsing function
+- Use chunked uploads for larger files
+
+**Limitation 3: Memory**
+- Serverless functions have limited memory
+- Large files may cause OOM errors
+
+**Workaround**:
+- Stream processing (don't load entire file)
+- Process in chunks
+- Use Vercel Blob for temporary storage
+
+### Vercel Deployment Steps
+
+1. **Install Vercel CLI**: `npm i -g vercel`
+2. **Link Project**: `vercel link`
+3. **Add Environment Variables**: `vercel env add POSTGRES_URL`
+4. **Deploy**: `vercel --prod`
+
+### Vercel Cost Breakdown
+
+- **Pro Plan**: $20/month (base)
+- **Vercel Postgres**: $20/month (200GB)
+- **Vercel Blob**: $7.50/month (50GB)
+- **Total**: **~$47.50/month**
+
+---
+
 ## Combined Implementation Plan
 
-### Phase 1: Server-Side Parsing (Week 1)
-- Days 1-2: Set up Express server, port parser
-- Days 3-4: Implement streaming parsing
-- Day 5: Client integration and testing
+### Option A: Traditional Server (3 weeks)
+- **Phase 1**: Server-Side Parsing (Week 1)
+- **Phase 2**: Database Integration (Week 2)
+- **Phase 3**: Pre-Computed Aggregations (Week 3)
 
-### Phase 2: Database Integration (Week 2)
-- Days 1-2: Set up PostgreSQL, create schema
-- Days 3-4: Implement API endpoints
-- Day 5: Migrate client to use API
+### Option B: Vercel Serverless (2 weeks) - **Recommended**
+- **Week 1**: Set up Vercel Postgres, create serverless functions, port parser
+- **Week 2**: Implement API endpoints, client integration, testing
 
-### Phase 3: Pre-Computed Aggregations (Week 3)
-- Days 1-2: Create aggregation tables
-- Days 3-4: Implement aggregation logic
-- Day 5: Optimize queries and test
-
-### Total Timeline: 3 weeks
+**Total Timeline**: 2-3 weeks depending on approach
 
 ---
 

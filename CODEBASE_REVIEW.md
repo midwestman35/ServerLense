@@ -8,6 +8,12 @@ This document provides a detailed review of the NocLense codebase to identify re
 **Codebase Version**: 1.5.0  
 **Target Architecture**: Vercel Serverless Functions + Vercel Postgres
 
+**Important Design Decision**: Files are **NOT stored long-term**. Uploaded files are:
+- Temporarily stored in Vercel Blob Storage for parsing only
+- Deleted immediately after parsing completes
+- Deleted when 'Clear' is used or session terminates
+- Only parsed log data is stored in Postgres database
+
 ---
 
 ## Architecture Overview
