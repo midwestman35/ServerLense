@@ -1,0 +1,22 @@
+{
+  "functions": {
+    "api/parse.ts": {
+      "maxDuration": 60
+    },
+    "api/parse-chunked.ts": {
+      "maxDuration": 300
+    },
+    "api/logs/**/*.ts": {
+      "maxDuration": 30
+    },
+    "api/counts/**/*.ts": {
+      "maxDuration": 30
+    },
+    "api/timeline/**/*.ts": {
+      "maxDuration": 30
+    },
+    "api/clear/**/*.ts": {
+      "maxDuration": 30
+    }
+  }
+}
