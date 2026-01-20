@@ -795,27 +795,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const file = req.body.file; // From FormData
     
-    // Upload to Vercel Blob Storage
-    const blob = await put(`logs/${Date.now()}-${file.name}`, file, {
+    // Upload to Vercel Blob Storage (temporary - for parsing only)
+    const blob = await put(`temp/${Date.now()}-${file.name}`, file, {
       access: 'public',
       addRandomSuffix: true,
     });
 
-    // Parse file (stream from blob URL)
-    const logs = await parseLogFile(blob.url);
-    
-    // Store in Vercel Postgres (batch insert)
-    const values = logs.map(log => 
-      `(${log.timestamp}, '${log.level}', '${log.component}', ...)`
-    ).join(',');
-    
-    await sql`INSERT INTO logs (...) VALUES ${sql.unsafe(values)}`;
-    
-    res.json({ 
-      success: true, 
-      count: logs.length,
-      blobUrl: blob.url 
-    });
+    try {
+      // Parse file (stream from blob URL)
+      const logs = await parseLogFile(blob.url);
+      
+      // Store in Vercel Postgres (batch insert)
+      const values = logs.map(log => 
+        `(${log.timestamp}, '${log.level}', '${log.component}', ...)`
+      ).join(',');
+      
+      await sql`INSERT INTO logs (...) VALUES ${sql.unsafe(values)}`;
+      
+      // IMPORTANT: Delete blob file immediately after parsing
+      // Files are NOT stored long-term - only parsed logs in Postgres
+      await del(blob.url);
+      
+      res.json({ 
+        success: true, 
+        count: logs.length
+      });
+    } catch (error) {
+      // Cleanup blob on error
+      await del(blob.url).catch(() => {}); // Ignore cleanup errors
+      throw error;
+    }
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -991,7 +1000,7 @@ export async function getLogs(filters: any, offset: number, limit: number) {
 
 - **Pro Plan**: $20/month (base)
 - **Vercel Postgres**: $20/month (200GB)
-- **Vercel Blob**: $7.50/month (50GB)
+- **Vercel Blob**: ~$0-2/month (temporary only - files deleted after parsing)
 - **Total**: **~$47.50/month**
 
 ---
