@@ -33,7 +33,7 @@ ServerLense is a server-side fork of NocLense that leverages server compute reso
 
 #### 1.1 Backend Setup (Day 1)
 
-**Create Express Server**
+**Option A: Express Server (Traditional)**
 ```javascript
 // server/index.js
 const express = require('express');
@@ -61,6 +61,43 @@ app.post('/api/parse', upload.single('file'), async (req, res) => {
 });
 
 app.listen(3000);
+```
+
+**Option B: Vercel Serverless Functions (Recommended)**
+```typescript
+// api/parse.ts
+import { VercelRequest, VercelResponse } from '@vercel/node';
+import { put } from '@vercel/blob';
+import { parseLogFile } from '../lib/parser';
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    const file = req.body.file; // File from FormData
+    
+    // Upload to Vercel Blob Storage for processing
+    const blob = await put(`logs/${Date.now()}-${file.name}`, file, {
+      access: 'public',
+    });
+
+    // Parse file (stream from blob URL)
+    const result = await parseLogFile(blob.url);
+    
+    res.json({ success: true, data: result, blobUrl: blob.url });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+}
+
+// For large files, use chunked upload:
+// api/parse-chunked.ts
+export const config = {
+  maxDuration: 300, // 5 minutes (Enterprise plan)
+  maxBodySize: '100mb', // Pro/Enterprise plan
+};
 ```
 
 **Dependencies**
@@ -618,20 +655,30 @@ router.get('/aggregates/timeline', async (req, res) => {
 
 ### Backend
 - **Runtime**: Node.js 18+
-- **Framework**: Express.js
-- **Database**: PostgreSQL 14+ (or SQLite for smaller deployments)
-- **File Upload**: Multer
+- **Framework**: Express.js (or Vercel Serverless Functions)
+- **Database**: PostgreSQL 14+ (or Vercel Postgres)
+- **File Upload**: Multer (or Vercel Blob Storage)
 - **Parsing**: Ported TypeScript parser to JavaScript
 
 ### Frontend
 - **Framework**: React (existing)
 - **API Client**: Fetch API or Axios
 - **State Management**: Existing LogContext (modified for API calls)
+- **Deployment**: Vercel (existing)
 
-### Infrastructure
+### Infrastructure Options
+
+#### Option A: Traditional Server (AWS, Azure, GCP, Self-Hosted)
 - **Container**: Docker (optional)
 - **Process Manager**: PM2 (for production)
 - **Reverse Proxy**: Nginx (for production)
+
+#### Option B: Vercel Serverless (Recommended for NocLense Integration)
+- **Serverless Functions**: Vercel Functions (Node.js runtime)
+- **Database**: Vercel Postgres (managed PostgreSQL)
+- **Storage**: Vercel Blob Storage (for file uploads)
+- **Edge Functions**: Vercel Edge Functions (for low-latency queries)
+- **Deployment**: Same Vercel project as frontend
 
 ---
 

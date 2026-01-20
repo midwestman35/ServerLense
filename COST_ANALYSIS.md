@@ -85,10 +85,51 @@ This document provides a detailed cost analysis for implementing ServerLense wit
 - **Specs**: 4 vCPU, 8GB RAM, 160GB SSD
 - **Total**: **~$24-48/month**
 
+#### Vercel (Serverless Functions)
+
+**Option A: Hobby Plan (Free)**
+- **Cost**: **$0/month**
+- **Limitations**: 
+  - 100GB bandwidth/month
+  - 10s function timeout
+  - 4.5MB max request body
+  - Not suitable for large file parsing
+- **Best for**: Development, testing
+
+**Option B: Pro Plan ($20/month)**
+- **Cost**: **$20/month** (base)
+- **Features**:
+  - 1TB bandwidth/month
+  - 60s function timeout
+  - 50MB max request body
+  - Unlimited serverless functions
+  - Vercel Postgres included (256MB free, then $0.10/GB)
+  - Vercel Blob Storage ($0.15/GB stored, $0.01/GB egress)
+- **Additional Costs**:
+  - Postgres: ~$5-20/month (for 50-200GB)
+  - Blob Storage: ~$5-15/month (for 30-100GB)
+- **Total**: **~$30-55/month**
+
+**Option C: Enterprise Plan (Custom Pricing)**
+- **Cost**: **Custom** (typically $400+/month)
+- **Features**:
+  - 5TB+ bandwidth/month
+  - 300s function timeout
+  - 100MB max request body
+  - Dedicated support
+  - Advanced security features
+- **Best for**: Production, high-volume usage
+
+**Note**: Vercel has execution time limits. For files >100MB or parsing >60s:
+- Use chunked uploads
+- Process in background with Vercel Cron Jobs
+- Consider hybrid: Upload to Vercel Blob, parse via separate worker
+
 ### Cost Summary: Option 1
 
 | Provider | Configuration | Monthly Cost |
 |----------|--------------|--------------|
+| **Vercel (Pro)** | Serverless + Postgres | **$30-55** |
 | AWS (t3.large) | 2 vCPU, 8GB | $64 |
 | AWS (t3.xlarge) | 4 vCPU, 16GB | $128 |
 | Azure (B4ms) | 4 vCPU, 16GB | $121 |
@@ -96,7 +137,7 @@ This document provides a detailed cost analysis for implementing ServerLense wit
 | Self-Hosted (VPS) | 4 vCPU, 8GB | $48 |
 | Self-Hosted (Dedicated) | 4-8 vCPU, 16-32GB | $90 |
 
-**Recommended**: AWS t3.xlarge or Self-Hosted VPS for cost-effectiveness
+**Recommended**: **Vercel Pro** (best integration with existing NocLense) or Self-Hosted VPS for cost-effectiveness
 
 ---
 
@@ -275,18 +316,23 @@ This document provides a detailed cost analysis for implementing ServerLense wit
 ## Cost Comparison: NocLense vs ServerLense
 
 ### Current NocLense (Client-Side)
-- **Server**: Static hosting (Vercel/Netlify) = **$0-20/month**
-- **Total**: **~$0-20/month**
+- **Server**: Static hosting (Vercel Hobby) = **$0/month**
+- **Total**: **~$0/month**
 
 ### ServerLense (Server-Side)
 
-| Option | AWS | Self-Hosted |
-|--------|-----|-------------|
-| Option 1 Only | $128/month | $48/month |
-| Option 1 + 2 | $208/month | $98/month |
-| All Options | $215/month | $105/month |
+| Option | Vercel | AWS | Self-Hosted |
+|--------|--------|-----|-------------|
+| Option 1 Only | **$27.50/month** | $128/month | $48/month |
+| Option 1 + 2 | **$47.50/month** | $208/month | $98/month |
+| All Options | **$47.50/month** | $215/month | $105/month |
 
-**Cost Increase**: $48-215/month depending on deployment
+**Cost Increase**: 
+- **Vercel**: $27.50-47.50/month (best integration with existing setup)
+- **AWS**: $128-215/month
+- **Self-Hosted**: $48-105/month
+
+**Recommendation**: **Vercel Pro** provides the best value and seamless integration with existing NocLense deployment
 
 ---
 
@@ -414,6 +460,34 @@ This document provides a detailed cost analysis for implementing ServerLense wit
 
 ## Conclusion
 
-ServerLense provides significant performance benefits but at an increased cost of $48-215/month for infrastructure. The best value is **self-hosted VPS** at $48-105/month, while **AWS Reserved Instances** offer the best managed solution at $135-215/month.
+ServerLense provides significant performance benefits but at an increased cost of $27.50-215/month for infrastructure. 
 
-**Recommendation**: Start with Option 1 (Server-Side Parsing) on a self-hosted VPS ($48/month) to validate the approach, then scale to Options 2 and 3 as needed.
+**Best Options:**
+1. **Vercel Pro** ($27.50-47.50/month) - **Recommended** for seamless integration with existing NocLense deployment
+   - Same platform as frontend
+   - No server management
+   - Automatic scaling
+   - Best developer experience
+
+2. **Self-Hosted VPS** ($48-105/month) - Best for cost-conscious deployments
+   - Full control
+   - No vendor lock-in
+   - Requires more management
+
+3. **AWS Reserved Instances** ($135-215/month) - Best for enterprise deployments
+   - Managed services
+   - High reliability
+   - More expensive
+
+**Recommendation**: 
+- **Start with Vercel Pro** ($27.50-47.50/month) for best integration and developer experience
+- If cost is primary concern, use **Self-Hosted VPS** ($48/month)
+- For enterprise needs, consider **AWS Reserved Instances** ($135/month)
+
+**Vercel Advantages:**
+- ✅ Same deployment platform as NocLense frontend
+- ✅ No server management or DevOps overhead
+- ✅ Automatic SSL, CDN, and edge optimization
+- ✅ Built-in monitoring and analytics
+- ✅ Easy rollbacks and preview deployments
+- ✅ Best developer experience
