@@ -94,46 +94,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Batch insert logs to Postgres
         // Insert in parallel batches for much better performance (10-50x faster than sequential)
-        const BATCH_SIZE = 100; // Insert 100 rows in parallel at a time
+        // Optimized for 1 vCPU + 2GB memory: Larger batches + parallel batch processing
+        const BATCH_SIZE = 250; // Increased from 100 - better CPU/memory utilization
+        const PARALLEL_BATCHES = 2; // Process 2 batches in parallel (I/O bound operations)
         let insertedCount = 0;
 
-        for (let i = 0; i < logs.length; i += BATCH_SIZE) {
-            const batch = logs.slice(i, i + BATCH_SIZE);
+        // Process batches with parallel execution for better hardware utilization
+        for (let i = 0; i < logs.length; i += BATCH_SIZE * PARALLEL_BATCHES) {
+            // Create parallel batch promises
+            const parallelBatchPromises: Promise<void>[] = [];
             
-            // Insert all rows in batch in parallel using Promise.all
-            // This is much faster than sequential inserts (10-50x speedup)
-            await Promise.all(
-                batch.map(log => 
-                    sql`
-                        INSERT INTO logs (
-                            timestamp, raw_timestamp, level, component, display_component,
-                            message, display_message, payload, type, is_sip, sip_method,
-                            file_name, file_color, call_id, report_id, operator_id,
-                            extension_id, station_id
-                        ) VALUES (
-                            ${log.timestamp},
-                            ${log.rawTimestamp || null},
-                            ${log.level},
-                            ${log.component || null},
-                            ${log.displayComponent || null},
-                            ${log.message},
-                            ${log.displayMessage || null},
-                            ${log.payload || null},
-                            ${log.type || 'LOG'},
-                            ${log.isSip || false},
-                            ${log.sipMethod || null},
-                            ${log.fileName || null},
-                            ${log.fileColor || null},
-                            ${log.callId || null},
-                            ${log.reportId || null},
-                            ${log.operatorId || null},
-                            ${log.extensionId || null},
-                            ${log.stationId || null}
+            for (let j = 0; j < PARALLEL_BATCHES && (i + j * BATCH_SIZE) < logs.length; j++) {
+                const batchStart = i + j * BATCH_SIZE;
+                const batch = logs.slice(batchStart, batchStart + BATCH_SIZE);
+                
+                // Insert all rows in this batch in parallel
+                parallelBatchPromises.push(
+                    Promise.all(
+                        batch.map(log => 
+                            sql`
+                                INSERT INTO logs (
+                                    timestamp, raw_timestamp, level, component, display_component,
+                                    message, display_message, payload, type, is_sip, sip_method,
+                                    file_name, file_color, call_id, report_id, operator_id,
+                                    extension_id, station_id
+                                ) VALUES (
+                                    ${log.timestamp},
+                                    ${log.rawTimestamp || null},
+                                    ${log.level},
+                                    ${log.component || null},
+                                    ${log.displayComponent || null},
+                                    ${log.message},
+                                    ${log.displayMessage || null},
+                                    ${log.payload || null},
+                                    ${log.type || 'LOG'},
+                                    ${log.isSip || false},
+                                    ${log.sipMethod || null},
+                                    ${log.fileName || null},
+                                    ${log.fileColor || null},
+                                    ${log.callId || null},
+                                    ${log.reportId || null},
+                                    ${log.operatorId || null},
+                                    ${log.extensionId || null},
+                                    ${log.stationId || null}
+                                )
+                            `
                         )
-                    `
-                )
-            );
-            insertedCount += batch.length;
+                    ).then(() => {}) // Convert to Promise<void>
+                );
+            }
+            
+            // Wait for all parallel batches to complete
+            await Promise.all(parallelBatchPromises);
+            insertedCount += Math.min(BATCH_SIZE * PARALLEL_BATCHES, logs.length - i);
             
             // Log progress for debugging
             if (insertedCount % 1000 === 0) {

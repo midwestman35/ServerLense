@@ -39,7 +39,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         } = req.query;
 
         const offsetNum = parseInt(offset as string, 10);
-        const limitNum = Math.min(parseInt(limit as string, 10), 5000); // Max 5000 per request
+        // Increased limits to better utilize 2GB memory: default 2000, max 10000
+        const limitNum = Math.min(parseInt(limit as string, 10), 10000); // Max 10000 per request (was 5000)
 
         // Build WHERE conditions using template literals (Neon doesn't support sql.unsafe)
         const whereParts: any[] = [];
@@ -70,14 +71,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             whereParts.push(sql`to_tsvector('english', message || ' ' || COALESCE(payload, '')) @@ plainto_tsquery('english', ${search as string})`);
         }
         
-        // Build queries
-        let countResult: any[];
-        let logsResult: any[];
+        // Build queries - execute count and data queries in parallel for better performance
+        let countQuery: any;
+        let logsQuery: any;
         
         if (whereParts.length === 0) {
-            // No filters
-            countResult = await sql`SELECT COUNT(*) as total FROM logs`;
-            logsResult = await sql`SELECT * FROM logs ORDER BY timestamp ASC LIMIT ${limitNum} OFFSET ${offsetNum}`;
+            // No filters - execute queries in parallel
+            countQuery = sql`SELECT COUNT(*) as total FROM logs`;
+            logsQuery = sql`SELECT * FROM logs ORDER BY timestamp ASC LIMIT ${limitNum} OFFSET ${offsetNum}`;
         } else {
             // Combine WHERE conditions
             let whereClause = whereParts[0];
@@ -85,9 +86,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 whereClause = sql`${whereClause} AND ${whereParts[i]}`;
             }
             
-            countResult = await sql`SELECT COUNT(*) as total FROM logs WHERE ${whereClause}`;
-            logsResult = await sql`SELECT * FROM logs WHERE ${whereClause} ORDER BY timestamp ASC LIMIT ${limitNum} OFFSET ${offsetNum}`;
+            countQuery = sql`SELECT COUNT(*) as total FROM logs WHERE ${whereClause}`;
+            logsQuery = sql`SELECT * FROM logs WHERE ${whereClause} ORDER BY timestamp ASC LIMIT ${limitNum} OFFSET ${offsetNum}`;
         }
+        
+        // Execute count and data queries in parallel for better performance
+        const [countResult, logsResult] = await Promise.all([
+            countQuery,
+            logsQuery
+        ]);
         
         const total = parseInt(countResult[0]?.total || '0', 10);
 
