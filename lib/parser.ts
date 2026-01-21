@@ -18,26 +18,56 @@ import type { LogEntry, LogLevel } from './types.js';
 import { cleanupLogEntry } from './messageCleanup.js';
 
 /**
- * Fetch file content from blob URL
+ * Fetch file content from blob URL (streaming for large files)
+ * Processes file incrementally to avoid memory exhaustion
+ * Includes retry logic for blob availability
  */
-async function fetchBlobContent(blobUrl: string): Promise<string> {
-    const response = await fetch(blobUrl);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch blob: ${response.statusText}`);
+async function* fetchBlobContentStreaming(blobUrl: string): AsyncGenerator<string> {
+    // Retry logic: blobs might not be immediately available after upload
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000; // 1 second
+    
+    let response: Response | null = null;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+            console.error(`[Parser] Fetching blob for streaming (attempt ${attempt + 1}/${MAX_RETRIES}): ${blobUrl}`);
+            
+            response = await fetch(blobUrl, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'text/plain, */*',
+                },
+            });
+            
+            if (response.ok) {
+                break; // Success, exit retry loop
+            }
+            
+            // If 404, wait and retry (blob might not be immediately available)
+            if (response.status === 404 && attempt < MAX_RETRIES - 1) {
+                console.error(`[Parser] Blob not found (404), retrying in ${RETRY_DELAY}ms...`);
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                continue;
+            }
+            
+            // For other errors, throw immediately
+            const errorText = await response.text().catch(() => response.statusText);
+            throw new Error(`Failed to fetch blob: HTTP ${response.status} - ${errorText}`);
+        } catch (error: any) {
+            lastError = error;
+            if (attempt < MAX_RETRIES - 1 && (error.message?.includes('404') || error.message?.includes('Not Found'))) {
+                console.error(`[Parser] Fetch failed, retrying in ${RETRY_DELAY}ms...`);
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                continue;
+            }
+            throw error;
+        }
     }
-    return response.text();
-}
-
-/**
- * Fetch file content in chunks (for large files)
- */
-async function fetchBlobContentStreaming(
-    blobUrl: string,
-    onProgress?: (progress: number) => void
-): Promise<string> {
-    const response = await fetch(blobUrl);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch blob: ${response.statusText}`);
+    
+    if (!response || !response.ok) {
+        throw lastError || new Error(`Failed to fetch blob after ${MAX_RETRIES} attempts`);
     }
 
     const reader = response.body?.getReader();
@@ -46,23 +76,76 @@ async function fetchBlobContentStreaming(
     }
 
     const decoder = new TextDecoder();
-    let text = '';
-    let receivedBytes = 0;
-    const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
+    let buffer = '';
 
     while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+            if (buffer) yield buffer;
+            break;
+        }
 
-        text += decoder.decode(value, { stream: true });
-        receivedBytes += value.length;
-
-        if (onProgress && contentLength > 0) {
-            onProgress(receivedBytes / contentLength);
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Yield complete lines, keep incomplete line in buffer
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || ''; // Keep last (possibly incomplete) line
+        
+        for (const line of lines) {
+            yield line;
         }
     }
+}
 
-    return text;
+/**
+ * Fetch file content from blob URL (non-streaming, for small files)
+ * Use only when file size is known to be small (< 10MB)
+ * Includes retry logic for blob availability
+ */
+async function fetchBlobContent(blobUrl: string): Promise<string> {
+    // Retry logic: blobs might not be immediately available after upload
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000; // 1 second
+    
+    let lastError: Error | null = null;
+    
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+            console.error(`[Parser] Fetching blob (attempt ${attempt + 1}/${MAX_RETRIES}): ${blobUrl}`);
+            
+            const response = await fetch(blobUrl, {
+                method: 'GET',
+                headers: {
+                    'Accept': 'text/plain, */*',
+                },
+            });
+            
+            if (response.ok) {
+                return await response.text();
+            }
+            
+            // If 404, wait and retry (blob might not be immediately available)
+            if (response.status === 404 && attempt < MAX_RETRIES - 1) {
+                console.error(`[Parser] Blob not found (404), retrying in ${RETRY_DELAY}ms...`);
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                continue;
+            }
+            
+            // For other errors, throw immediately
+            const errorText = await response.text().catch(() => response.statusText);
+            throw new Error(`Failed to fetch blob: HTTP ${response.status} - ${errorText}`);
+        } catch (error: any) {
+            lastError = error;
+            if (attempt < MAX_RETRIES - 1 && (error.message?.includes('404') || error.message?.includes('Not Found'))) {
+                console.error(`[Parser] Fetch failed, retrying in ${RETRY_DELAY}ms...`);
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                continue;
+            }
+            throw error;
+        }
+    }
+    
+    throw lastError || new Error(`Failed to fetch blob after ${MAX_RETRIES} attempts`);
 }
 
 /**
@@ -346,6 +429,7 @@ function parseHomerText(text: string, fileColor: string, fileName: string): LogE
 
 /**
  * Parse standard log format (streaming for large files)
+ * NOTE: Currently still loads full text - streaming parser TODO
  */
 async function parseStandardLogStreaming(
     text: string,
@@ -353,7 +437,6 @@ async function parseStandardLogStreaming(
     fileName: string,
     onProgress?: (progress: number) => void
 ): Promise<LogEntry[]> {
-    const CHUNK_SIZE = 2 * 1024 * 1024; // 2MB chunks
     const parsedLogs: LogEntry[] = [];
     const lines = text.split(/\r?\n/);
     
@@ -487,13 +570,259 @@ async function parseStandardLogStreaming(
 }
 
 /**
- * Main parser function - server-side version
+ * Main parser function - server-side version with incremental processing
  * 
  * @param blobUrl - URL to the blob file (from Vercel Blob Storage)
  * @param fileName - Original file name
  * @param fileColor - Color for file identification
+ * @param onBatchReady - Callback called with batches of parsed logs (for incremental DB insertion)
+ * @param batchSize - Size of batches to pass to onBatchReady
  * @param onProgress - Optional progress callback
- * @returns Array of parsed log entries (without IDs - database assigns them)
+ * @returns Total count of parsed log entries
+ */
+export async function parseLogFileIncremental(
+    blobUrl: string,
+    fileName: string,
+    fileColor: string = '#3b82f6',
+    onBatchReady: (batch: LogEntry[]) => Promise<void>,
+    batchSize: number = 500,
+    onProgress?: (progress: number) => void
+): Promise<number> {
+    if (onProgress) onProgress(0.05);
+    
+    // Check Content-Length to determine if we should stream
+    const headResponse = await fetch(blobUrl, { method: 'HEAD' });
+    const contentLength = parseInt(headResponse.headers.get('content-length') || '0', 10);
+    const USE_STREAMING = contentLength > 10 * 1024 * 1024; // Stream if > 10MB
+    
+    console.error(`[Parser] File size: ${(contentLength / 1024 / 1024).toFixed(2)}MB, Using TRUE streaming: ${USE_STREAMING}`);
+    
+    if (USE_STREAMING) {
+        // TRUE STREAMING: Process line-by-line without loading entire file
+        return await parseLogFileStreaming(blobUrl, fileName, fileColor, onBatchReady, batchSize, onProgress);
+    } else {
+        // Small file - load all at once (faster for small files, acceptable memory)
+        const text = await fetchBlobContent(blobUrl);
+        if (onProgress) onProgress(0.3);
+
+        // Check file type
+        const isCSV = fileName.toLowerCase().endsWith('.csv');
+        const isHomer = text.match(/^proto:\S+\s+\S+\s+\S+\s*(--->|&lt;---)\s+\S+/im);
+
+        if (isCSV) {
+            const allLogs = parseDatadogCSV(text, fileColor, fileName);
+            // Process in batches (small file, acceptable to load all)
+            for (let i = 0; i < allLogs.length; i += batchSize) {
+                await onBatchReady(allLogs.slice(i, i + batchSize));
+            }
+            return allLogs.length;
+        }
+
+        if (isHomer) {
+            const allLogs = parseHomerText(text, fileColor, fileName);
+            // Process in batches (small file, acceptable to load all)
+            for (let i = 0; i < allLogs.length; i += batchSize) {
+                await onBatchReady(allLogs.slice(i, i + batchSize));
+            }
+            return allLogs.length;
+        }
+
+        // Standard log format - small file, acceptable to load all
+        const allLogs = await parseStandardLogStreaming(text, fileColor, fileName, onProgress);
+        // Process in batches
+        for (let i = 0; i < allLogs.length; i += batchSize) {
+            await onBatchReady(allLogs.slice(i, i + batchSize));
+        }
+        return allLogs.length;
+    }
+}
+
+/**
+ * Stream and parse log file incrementally (for large files)
+ * TRUE STREAMING: Processes line-by-line without loading entire file into memory
+ */
+async function parseLogFileStreaming(
+    blobUrl: string,
+    fileName: string,
+    fileColor: string,
+    onBatchReady: (batch: LogEntry[]) => Promise<void>,
+    batchSize: number,
+    onProgress?: (progress: number) => void
+): Promise<number> {
+    console.error(`[Parser] Starting TRUE streaming parse for ${fileName}`);
+    console.error(`[Parser] Blob URL: ${blobUrl}`);
+    
+    // Get file size for progress tracking (with retry)
+    let contentLength = 0;
+    try {
+        const headResponse = await fetch(blobUrl, { 
+            method: 'HEAD',
+            headers: {
+                'Accept': 'text/plain, */*',
+            },
+        });
+        if (headResponse.ok) {
+            contentLength = parseInt(headResponse.headers.get('content-length') || '0', 10);
+        } else {
+            console.error(`[Parser] HEAD request failed: ${headResponse.status} ${headResponse.statusText}`);
+        }
+    } catch (error) {
+        console.error(`[Parser] HEAD request error:`, error);
+        // Continue without content-length (progress won't be accurate)
+    }
+    
+    const lineGenerator = fetchBlobContentStreaming(blobUrl);
+    const batch: LogEntry[] = [];
+    let totalCount = 0;
+    let processedBytes = 0;
+    let currentLog: LogEntry | null = null;
+    
+    const logRegex1 = /^\[(INFO|DEBUG|ERROR|WARN)\]\s\[(\d{1,2}\/\d{1,2}\/\d{4}),\s(.*?)\]\s\[(.*?)\]:\s(.*)/;
+    const logRegex2 = /^\[(INFO|DEBUG|ERROR|WARN)\]\s\[(\d{4}-\d{2}-\d{2})\s(\d{2}:\d{2}:\d{2},\d+)\]\s\[(.*?)\]\s(.*)/;
+    
+    // Process lines as they stream in
+    for await (const line of lineGenerator) {
+        processedBytes += line.length + 1; // +1 for newline
+        
+        // Update progress
+        if (onProgress && contentLength > 0) {
+            const progress = Math.min(0.1 + (processedBytes / contentLength) * 0.9, 0.95);
+            onProgress(progress);
+        }
+        
+        if (!line.trim()) continue;
+        
+        // Try to match log line patterns
+        let match = line.match(logRegex1);
+        let dateFormat = 'original';
+        
+        if (!match) {
+            match = line.match(logRegex2);
+            dateFormat = 'iso';
+        }
+        
+        if (match) {
+            // Save previous log entry if exists
+            if (currentLog) {
+                processLogPayload(currentLog);
+                batch.push(currentLog);
+                totalCount++;
+                
+                // Insert batch when it reaches size
+                if (batch.length >= batchSize) {
+                    await onBatchReady(batch);
+                    batch.length = 0; // Clear batch (free memory)
+                }
+            }
+            
+            // Parse new log entry
+            const [_, level, date, time, component, message] = match;
+            let timestampStr: string;
+            let timestamp: number;
+            
+            // Extract timestamp
+            const messageTimestampMatch = message.match(/(\w{3}\s+\w{3}\s+\d{1,2}\s+\d{4}\s+\d{2}:\d{2}:\d{2}\s+GMT[+-]\d{4})/);
+            
+            if (messageTimestampMatch) {
+                try {
+                    timestamp = new Date(messageTimestampMatch[1]).getTime();
+                    if (!isNaN(timestamp)) {
+                        timestampStr = messageTimestampMatch[1];
+                    } else {
+                        throw new Error('Invalid timestamp');
+                    }
+                } catch (e) {
+                    if (dateFormat === 'iso') {
+                        timestampStr = `${date} ${time}`;
+                        const isoString = `${date}T${time.replace(',', '.')}`;
+                        timestamp = new Date(isoString).getTime();
+                    } else {
+                        timestampStr = `${date} ${time}`;
+                        timestamp = new Date(timestampStr).getTime();
+                    }
+                }
+            } else {
+                if (dateFormat === 'iso') {
+                    timestampStr = `${date} ${time}`;
+                    const isoString = `${date}T${time.replace(',', '.')}`;
+                    timestamp = new Date(isoString).getTime();
+                } else {
+                    let timeWithoutMs = time;
+                    let milliseconds = 0;
+                    
+                    const msMatch = time.match(/(.+?),\s*(\d+)$/);
+                    if (msMatch) {
+                        timeWithoutMs = msMatch[1].trim();
+                        milliseconds = parseInt(msMatch[2], 10);
+                    }
+                    
+                    timestampStr = `${date} ${time}`;
+                    const baseTimestamp = new Date(`${date} ${timeWithoutMs}`).getTime();
+                    
+                    if (!isNaN(baseTimestamp)) {
+                        timestamp = baseTimestamp + milliseconds;
+                    } else {
+                        timestamp = Date.now();
+                    }
+                }
+            }
+            
+            const cleaned = cleanupLogEntry(component, message.trim());
+            
+            // Check for special tags
+            let specialTag = '';
+            if (message.includes('MEDIA_TIMEOUT') || line.includes('MEDIA_TIMEOUT')) {
+                specialTag += '⚠️ [MEDIA_TIMEOUT] ';
+            }
+            if (line.includes('X-Recovery: true') || message.includes('X-Recovery: true')) {
+                specialTag += '🔄 [RECOVERED] ';
+            }
+            
+            const trimmedMessage = message.trim();
+            currentLog = {
+                timestamp: isNaN(timestamp) ? Date.now() : timestamp,
+                rawTimestamp: timestampStr,
+                level: level as LogLevel,
+                component,
+                displayComponent: cleaned.displayComponent,
+                message: trimmedMessage,
+                displayMessage: specialTag + cleaned.displayMessage,
+                payload: '',
+                type: 'LOG',
+                isSip: false,
+                fileName: fileName,
+                fileColor,
+                _messageLower: trimmedMessage.toLowerCase(),
+                _componentLower: component.toLowerCase()
+            };
+        } else if (currentLog) {
+            // Continuation line (payload)
+            currentLog.payload = (currentLog.payload || '') + (currentLog.payload ? '\n' : '') + line;
+            currentLog._payloadLower = undefined; // Invalidate cached lowercase
+        }
+    }
+    
+    // Process final log entry
+    if (currentLog) {
+        processLogPayload(currentLog);
+        batch.push(currentLog);
+        totalCount++;
+    }
+    
+    // Insert final batch
+    if (batch.length > 0) {
+        await onBatchReady(batch);
+    }
+    
+    if (onProgress) onProgress(1.0);
+    
+    console.error(`[Parser] Streaming parse complete: ${totalCount} entries processed`);
+    return totalCount;
+}
+
+/**
+ * Legacy function - kept for backward compatibility
+ * WARNING: This loads entire file into memory - use parseLogFileIncremental for large files
  */
 export async function parseLogFile(
     blobUrl: string,
@@ -501,10 +830,6 @@ export async function parseLogFile(
     fileColor: string = '#3b82f6',
     onProgress?: (progress: number) => void
 ): Promise<LogEntry[]> {
-    // Determine if we should use streaming based on content-length header
-    // For now, always fetch full content (Vercel functions have enough memory)
-    // In production, we might want to check Content-Length header first
-    
     if (onProgress) onProgress(0.1);
     
     const text = await fetchBlobContent(blobUrl);

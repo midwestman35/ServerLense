@@ -4,17 +4,17 @@
 
 ### 1. View Logs via Vercel CLI
 ```bash
-# Follow logs in real-time
-npx vercel logs --follow
+# View logs for specific deployment (requires deployment URL)
+npx vercel logs <deployment-url> | grep -i "parse\|error\|403"
 
-# View parse function logs only
-npx vercel logs api/parse --follow
+# For latest production deployment:
+npx vercel logs https://serverlense-jn1gjqrmh-enriques-projects-e2ad103a.vercel.app | grep "\[Parse\]"
 
-# Filter for 403 errors
-npx vercel logs api/parse --output raw | grep -i "403\|forbidden\|error"
+# Filter for errors only
+npx vercel logs https://serverlense-jn1gjqrmh-enriques-projects-e2ad103a.vercel.app | grep -i "error\|403"
 
-# View last 100 lines
-npx vercel logs --output raw | tail -100
+# Get deployment URL first
+npx vercel ls
 ```
 
 ### 2. View Logs via Dashboard

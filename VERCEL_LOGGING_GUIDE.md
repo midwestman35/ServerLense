@@ -11,26 +11,26 @@ npx vercel link  # Link to your project
 
 ### 2. View Recent Logs
 ```bash
-# View logs for all functions
-npx vercel logs --follow
+# First, get your deployment URL
+npx vercel ls
 
-# View logs for specific function (parse)
-npx vercel logs api/parse --follow
+# View logs for specific deployment
+npx vercel logs <deployment-url>
 
-# View logs for last 100 lines
-npx vercel logs --output raw | tail -100
+# Example (latest production):
+npx vercel logs https://serverlense-jn1gjqrmh-enriques-projects-e2ad103a.vercel.app
 
-# View logs with timestamps
-npx vercel logs --output raw --since 1h
+# Filter for parse function logs
+npx vercel logs <deployment-url> | grep "\[Parse\]"
 ```
 
 ### 3. Filter Logs by Error
 ```bash
-# Filter for errors only
-npx vercel logs --output raw | grep -i "error\|403\|failed"
+# Filter for errors only (replace with your deployment URL)
+npx vercel logs <deployment-url> | grep -i "error\|403\|failed"
 
 # Filter for parse function errors
-npx vercel logs api/parse --output raw | grep -i "error\|403"
+npx vercel logs <deployment-url> | grep -E "\[Parse\].*error|error.*\[Parse\]" -i
 ```
 
 ### 4. View Logs for Specific Deployment

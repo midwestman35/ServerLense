@@ -1,6 +1,7 @@
 import type { LogEntry } from '../types';
 
 const API_BASE = '/api';
+const VERCEL_REQUEST_LIMIT = 4.5 * 1024 * 1024; // 4.5MB - Vercel's hard limit
 
 export interface LogsQueryParams {
     offset?: number;
@@ -60,6 +61,7 @@ export interface ClearResponse {
 
 /**
  * Upload and parse a log file
+ * Automatically uses client-side blob upload for files > 4.5MB to bypass Vercel's limit
  * @param file - The log file to upload
  * @param onProgress - Optional progress callback (0-1)
  * @returns Parse response with count and fileName
@@ -68,6 +70,92 @@ export async function uploadLogFile(
     file: File,
     onProgress?: (progress: number) => void
 ): Promise<ParseResponse> {
+    // Check file size - use client-side blob upload for files > 4.5MB
+    if (file.size > VERCEL_REQUEST_LIMIT) {
+        console.log(`[Client] File ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds 4.5MB limit, using client-side blob upload`);
+        
+        try {
+            // Step 1: Upload file directly to Blob Storage using handleUpload endpoint
+            // This bypasses the 4.5MB limit entirely
+            if (onProgress) onProgress(0.1);
+            console.log(`[Client] Uploading directly to Blob Storage via handleUpload...`);
+            
+            // Dynamic import for @vercel/blob/client (only when needed for large files)
+            const { upload } = await import('@vercel/blob/client');
+            
+            // Upload using handleUpload endpoint (v2.0.0 API)
+            const blob = await upload(file.name, file, {
+                access: 'public',
+                handleUploadUrl: `${API_BASE}/blob-upload-token`,
+                onUploadProgress: onProgress ? (progress) => {
+                    // Upload progress: 0.1 to 0.7 (60% of total)
+                    // progress.percentage is 0-100, convert to 0-1
+                    const uploadProgress = 0.1 + ((progress.percentage / 100) * 0.6);
+                    onProgress(uploadProgress);
+                } : undefined,
+            });
+            
+            console.log(`[Client] Blob uploaded: ${blob.url}`);
+            
+            // The blob URL is in the response from handleUpload
+            const blobUrl = blob.url;
+            if (!blobUrl) {
+                throw new Error('Failed to get blob URL from upload response');
+            }
+            
+            // Verify blob URL format
+            if (!blobUrl.startsWith('http://') && !blobUrl.startsWith('https://')) {
+                throw new Error(`Invalid blob URL format: ${blobUrl}`);
+            }
+            
+            console.log(`[Client] Sending blob URL to parse endpoint: ${blobUrl.substring(0, 80)}...`);
+            
+            // Small delay to ensure blob is fully available (Vercel Blob propagation)
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            // Step 2: Send blob URL to parse endpoint
+            if (onProgress) onProgress(0.7);
+            const parseResponse = await fetch(`${API_BASE}/parse`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    blobUrl: blobUrl,
+                    fileName: file.name,
+                }),
+            });
+            
+            if (!parseResponse.ok) {
+                let errorMessage = `HTTP ${parseResponse.status}`;
+                try {
+                    const errorData = await parseResponse.json();
+                    errorMessage = errorData.error || errorData.details || errorMessage;
+                    console.error('[Client] Parse endpoint error:', errorData);
+                } catch (e) {
+                    const errorText = await parseResponse.text().catch(() => parseResponse.statusText);
+                    errorMessage = errorText || errorMessage;
+                }
+                throw new Error(errorMessage);
+            }
+            
+            if (onProgress) onProgress(1.0);
+            const result = await parseResponse.json();
+            console.log(`[Client] Parse successful: ${result.count || 0} logs inserted`);
+            return result;
+        } catch (error) {
+            console.error('[Client] Error in blob upload flow:', error);
+            // Re-throw with more context
+            if (error instanceof Error) {
+                throw error;
+            }
+            throw new Error(`Upload/parse failed: ${String(error)}`);
+        }
+    }
+    
+    // For files < 4.5MB, use legacy method (multipart/form-data)
+    console.log(`[Client] File ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB) under limit, using direct upload`);
+    
     const formData = new FormData();
     formData.append('file', file);
 
