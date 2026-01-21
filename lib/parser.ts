@@ -46,10 +46,11 @@ async function* fetchBlobContentStreaming(blobUrl: string): AsyncGenerator<strin
                 break; // Success, exit retry loop
             }
             
-            // If 404, wait and retry (blob might not be immediately available)
+            // If 404, wait and retry with exponential backoff (blob might not be immediately available)
             if (response.status === 404 && attempt < MAX_RETRIES - 1) {
-                console.error(`[Parser] Blob not found (404), retrying in ${RETRY_DELAY}ms...`);
-                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                const delay = INITIAL_RETRY_DELAY * Math.pow(2, attempt); // Exponential backoff: 2s, 4s, 8s, 16s
+                console.error(`[Parser] Blob not found (404), retrying in ${delay}ms... (attempt ${attempt + 1}/${MAX_RETRIES})`);
+                await new Promise(resolve => setTimeout(resolve, delay));
                 continue;
             }
             
@@ -59,8 +60,9 @@ async function* fetchBlobContentStreaming(blobUrl: string): AsyncGenerator<strin
         } catch (error: any) {
             lastError = error;
             if (attempt < MAX_RETRIES - 1 && (error.message?.includes('404') || error.message?.includes('Not Found'))) {
-                console.error(`[Parser] Fetch failed, retrying in ${RETRY_DELAY}ms...`);
-                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+                const delay = INITIAL_RETRY_DELAY * Math.pow(2, attempt); // Exponential backoff
+                console.error(`[Parser] Fetch failed, retrying in ${delay}ms... (attempt ${attempt + 1}/${MAX_RETRIES})`);
+                await new Promise(resolve => setTimeout(resolve, delay));
                 continue;
             }
             throw error;
