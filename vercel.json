@@ -5,7 +5,7 @@
   "functions": {
     "api/parse.ts": {
       "maxDuration": 60,
-      "memory": 2048
+      "memory": 3008
     },
     "api/health.ts": {
       "maxDuration": 30

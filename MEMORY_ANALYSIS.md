@@ -1,127 +1,174 @@
-# Memory Analysis: 740MB File Crash
+# Memory Issue Analysis
 
-## Problem Summary
-Chrome crashes with "out of memory" when uploading 740MB of log files. This is **both a Chrome limitation AND code inefficiency**.
+## Neon Database Status ✅
+**Conclusion: Neon is NOT contributing to memory errors**
 
-## Root Causes
+Based on the Neon dashboard:
+- **RAM Usage**: Consistently near 0 GB (well within 4 GB limit)
+- **Storage**: 0.04 GB / 0.5 GB (8% usage)
+- **Network Transfer**: 0.11 GB / 5 GB (2% usage)
+- **Compute**: 0.25 CU, underutilized
 
-### 1. **Full File Accumulation** (Critical Issue)
-**Location**: `src/utils/parser.ts:252-274` (`readFileInChunks`)
+**Verdict**: Neon database has plenty of headroom and is not causing memory issues.
 
-Despite reading in chunks, the function accumulates the **entire file** into a single string:
-```typescript
-let fullText = '';
-// ... reads chunks ...
-fullText += chunkText;  // Accumulates entire 740MB file
-return fullText;  // Returns 740MB+ string
+---
+
+## Vercel Function Memory Configuration
+
+### Current Settings (`vercel.json`):
+```json
+{
+  "functions": {
+    "api/parse.ts": {
+      "maxDuration": 60,
+      "memory": 2048  // 2GB memory limit
+    }
+  }
+}
 ```
 
-**Memory Impact**: 
-- 740MB file → ~740MB string (UTF-16 encoding can double this to ~1.5GB)
-- This happens **before** any parsing occurs
+### Memory Limit Analysis:
+- **Allocated**: 2048 MB (2 GB)
+- **Vercel Pro Plan**: Max 3008 MB per function
+- **Current Usage**: Likely exceeding 2GB during large file processing
 
-### 2. **All Logs Parsed into Memory**
-**Location**: `src/utils/parser.ts:308-470`
+---
 
-Every log line creates a `LogEntry` object with multiple string properties:
-- `message`, `displayMessage`, `component`, `displayComponent`
-- `payload` (can be large for SIP messages)
-- Pre-computed lowercase strings (`_messageLower`, `_componentLower`, etc.)
+## Root Cause: Vercel Function Memory Issues
 
-**Memory Impact**:
-- 740MB file ≈ millions of log entries
-- Each entry: ~500 bytes - 5KB (depending on payload)
-- **Total**: Potentially 500MB - 5GB+ of parsed objects
-
-### 3. **Multiple Array Copies**
-**Location**: `src/components/FileUploader.tsx:62,70`
+### Problem 1: Batch Accumulation
+**Location**: `api/parse.ts:207-211`
 
 ```typescript
-allParsedLogs.push(...parsed);  // Spread operator creates copy
-const mergedLogs = [...logs, ...allParsedLogs];  // Another copy
+pendingBatches.push(batch);
+
+// When we have enough batches, insert them in parallel
+if (pendingBatches.length >= PARALLEL_BATCHES) {
+    const batchesToInsert = pendingBatches.splice(0, PARALLEL_BATCHES);
 ```
 
-**Memory Impact**: Temporary 2x memory usage during merge
+**Issue**: 
+- `pendingBatches` accumulates batches before inserting
+- If streaming parser produces batches faster than DB can insert, memory grows
+- Each batch contains 250 log entries (LogEntry objects)
+- With 700MB file → potentially 1000+ batches = 250,000+ log objects in memory
 
-### 4. **All Data in React State**
-**Location**: `src/contexts/LogContext.tsx:102`
+**Memory Calculation**:
+- 250 entries/batch × ~2KB per entry = ~500KB per batch
+- 10 batches waiting = ~5MB
+- 100 batches waiting = ~50MB
+- **Problem**: If DB inserts are slow, batches accumulate faster than they're consumed
 
-All parsed logs stored in `useState<LogEntry[]>([])`, meaning:
-- Everything stays in memory
-- No pagination or lazy loading
-- Virtual scrolling displays only visible rows, but all data is still in memory
+### Problem 2: Parallel Insert Overhead
+**Location**: `api/parse.ts:214-248`
 
-## Chrome Memory Limits
+```typescript
+await Promise.all(
+    batchesToInsert.map(batchToInsert =>
+        Promise.all(
+            batchToInsert.map(log => sql`INSERT ...`)
+        )
+    )
+);
+```
 
-- **Per-tab limit**: ~2-4GB (varies by system)
-- **32-bit Chrome**: ~2GB
-- **64-bit Chrome**: ~4GB (can be higher on systems with more RAM)
+**Issue**:
+- Creates N × M promises (N batches × M logs per batch)
+- For 10 batches × 250 logs = 2,500 concurrent database connections
+- Each connection uses memory
+- Neon serverless driver might be creating too many connections
 
-## Current Memory Usage Estimate (740MB file)
+### Problem 3: Streaming Parser Memory
+**Location**: `lib/parser.ts:631-760`
 
-1. **File text in memory**: ~740MB - 1.5GB
-2. **Parsed LogEntry objects**: ~500MB - 5GB
-3. **React state overhead**: ~50-100MB
-4. **Browser overhead**: ~200-500MB
-5. **Total**: **~1.5GB - 7GB+** (exceeds Chrome limits)
+**Potential Issues**:
+- `batch` array grows to `batchSize` (500) before calling `onBatchReady`
+- If `onBatchReady` is slow, batches accumulate
+- Line buffer in streaming function might grow if lines are very long
 
-## Solutions (Priority Order)
+---
 
-### Immediate Fixes (High Priority)
+## Recommended Fixes
 
-1. **Implement True Streaming Parser**
-   - Process chunks line-by-line without accumulating full text
-   - Parse and emit LogEntry objects as chunks are processed
-   - Discard processed text immediately
+### Fix 1: Reduce Batch Accumulation
+**Change**: Insert batches immediately instead of accumulating
 
-2. **Add Memory Limit Checks**
-   - Warn users before parsing files >200MB
-   - Hard limit at ~500MB with option to proceed
-   - Estimate memory usage before parsing
+```typescript
+// OLD: Accumulate batches
+const insertBatch = async (batch: LogEntry[]) => {
+    pendingBatches.push(batch);
+    if (pendingBatches.length >= PARALLEL_BATCHES) {
+        // Insert in parallel
+    }
+};
 
-3. **Optimize Array Operations**
-   - Use `Array.concat()` instead of spread operators for large arrays
-   - Process files sequentially instead of accumulating all
+// NEW: Insert immediately, smaller parallel groups
+const insertBatch = async (batch: LogEntry[]) => {
+    if (batch.length === 0) return;
+    
+    // Insert this batch immediately (don't accumulate)
+    await Promise.all(
+        batch.map(log => sql`INSERT ...`)
+    );
+    
+    insertedCount += batch.length;
+};
+```
 
-### Medium-Term Solutions
+### Fix 2: Reduce Batch Size
+**Change**: Smaller batches = less memory per batch
 
-4. **Implement Log Limit/Truncation**
-   - Option to parse only first N lines
-   - Option to parse only filtered subset (by date range, component, etc.)
-   - Skip parsing payloads for non-SIP logs
+```typescript
+// OLD: 250 entries per batch
+const BATCH_SIZE = 250;
 
-5. **Use IndexedDB for Large Datasets**
-   - Store parsed logs in IndexedDB instead of memory
-   - Load logs on-demand as user scrolls
-   - Implement pagination at storage level
+// NEW: 50-100 entries per batch (more frequent inserts, less memory)
+const BATCH_SIZE = 50;
+```
 
-6. **Lazy Payload Loading**
-   - Don't parse payloads until user expands log row
-   - Store payload offsets instead of full payload strings
+### Fix 3: Increase Function Memory
+**Change**: Request more memory from Vercel
 
-### Long-Term Solutions
+```json
+{
+  "functions": {
+    "api/parse.ts": {
+      "maxDuration": 60,
+      "memory": 3008  // Max for Pro plan (3GB)
+    }
+  }
+}
+```
 
-7. **Server-Side Processing**
-   - Upload files to server for parsing
-   - Stream results back to client
-   - Only load visible/filtered logs
+### Fix 4: Optimize Database Inserts
+**Change**: Use COPY or bulk insert instead of individual INSERTs
 
-8. **Web Workers**
-   - Move parsing to Web Worker thread
-   - Prevents blocking main thread
-   - Better memory isolation
+```typescript
+// Instead of: Promise.all(batch.map(log => sql`INSERT ...`))
+// Use: Single bulk insert with VALUES clause
+await sql`
+    INSERT INTO logs (...) VALUES
+    ${sql(batch.map(log => sql`(${log.timestamp}, ${log.level}, ...)`))}
+`;
+```
 
-## Recommended Immediate Action
+---
 
-**For 740MB files, recommend:**
-1. Split file into smaller chunks (<200MB each)
-2. Process files sequentially
-3. Clear previous logs before loading new large file
-4. Use filters to reduce memory footprint
+## Immediate Action Plan
 
-## Code Changes Needed
+1. **Reduce batch size** from 250 → 50
+2. **Remove batch accumulation** - insert immediately
+3. **Increase function memory** to 3008 MB (max)
+4. **Add memory monitoring** logs to track usage
 
-1. Refactor `readFileInChunks` to process incrementally
-2. Implement streaming parser that doesn't accumulate full text
-3. Add memory estimation and warnings
-4. Optimize array operations for large datasets
+---
+
+## Expected Impact
+
+**Before**:
+- Memory usage: ~2-3GB (exceeds 2GB limit)
+- Out of memory errors for 700MB+ files
+
+**After**:
+- Memory usage: ~500MB-1GB (well within 3GB limit)
+- Should handle 1GB+ files successfully

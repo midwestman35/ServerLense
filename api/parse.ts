@@ -194,66 +194,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Processes line-by-line without loading entire file into memory
         console.error(`[Parse] Starting TRUE streaming parse for file: ${fileName}${fileSize > 0 ? ` (${(fileSize / 1024 / 1024).toFixed(2)}MB)` : ''}`);
         
-        const BATCH_SIZE = 250; // Batch size for DB insertion
-        const PARALLEL_BATCHES = 2; // Process 2 batches in parallel
+        const BATCH_SIZE = 50; // Smaller batches = less memory per batch
         let insertedCount = 0;
         let totalParsed = 0;
-        let pendingBatches: LogEntry[][] = [];
         
-        // Insert batch to database (with parallel batch processing)
+        // Insert batch to database immediately (no accumulation to prevent memory buildup)
         const insertBatch = async (batch: LogEntry[]) => {
             if (batch.length === 0) return;
             
-            pendingBatches.push(batch);
-            
-            // When we have enough batches, insert them in parallel
-            if (pendingBatches.length >= PARALLEL_BATCHES) {
-                const batchesToInsert = pendingBatches.splice(0, PARALLEL_BATCHES);
-                
-                // Insert all batches in parallel
+            // Insert this batch immediately - don't accumulate batches
+            // This prevents memory from growing if parser is faster than DB inserts
+            try {
                 await Promise.all(
-                    batchesToInsert.map(batchToInsert =>
-                        Promise.all(
-                            batchToInsert.map(log => 
-                                sql`
-                                    INSERT INTO logs (
-                                        timestamp, raw_timestamp, level, component, display_component,
-                                        message, display_message, payload, type, is_sip, sip_method,
-                                        file_name, file_color, call_id, report_id, operator_id,
-                                        extension_id, station_id
-                                    ) VALUES (
-                                        ${log.timestamp},
-                                        ${log.rawTimestamp || null},
-                                        ${log.level},
-                                        ${log.component || null},
-                                        ${log.displayComponent || null},
-                                        ${log.message},
-                                        ${log.displayMessage || null},
-                                        ${log.payload || null},
-                                        ${log.type || 'LOG'},
-                                        ${log.isSip || false},
-                                        ${log.sipMethod || null},
-                                        ${log.fileName || null},
-                                        ${log.fileColor || null},
-                                        ${log.callId || null},
-                                        ${log.reportId || null},
-                                        ${log.operatorId || null},
-                                        ${log.extensionId || null},
-                                        ${log.stationId || null}
-                                    )
-                                `
+                    batch.map(log => 
+                        sql`
+                            INSERT INTO logs (
+                                timestamp, raw_timestamp, level, component, display_component,
+                                message, display_message, payload, type, is_sip, sip_method,
+                                file_name, file_color, call_id, report_id, operator_id,
+                                extension_id, station_id
+                            ) VALUES (
+                                ${log.timestamp},
+                                ${log.rawTimestamp || null},
+                                ${log.level},
+                                ${log.component || null},
+                                ${log.displayComponent || null},
+                                ${log.message},
+                                ${log.displayMessage || null},
+                                ${log.payload || null},
+                                ${log.type || 'LOG'},
+                                ${log.isSip || false},
+                                ${log.sipMethod || null},
+                                ${log.fileName || null},
+                                ${log.fileColor || null},
+                                ${log.callId || null},
+                                ${log.reportId || null},
+                                ${log.operatorId || null},
+                                ${log.extensionId || null},
+                                ${log.stationId || null}
                             )
-                        )
+                        `
                     )
                 );
                 
-                const batchCount = batchesToInsert.reduce((sum, b) => sum + b.length, 0);
-                insertedCount += batchCount;
+                insertedCount += batch.length;
                 
                 // Log progress for debugging
-                if (insertedCount % 1000 === 0) {
-                    console.error(`[Parse] Inserted ${insertedCount} logs... (memory efficient)`);
+                if (insertedCount % 500 === 0) {
+                    console.error(`[Parse] Inserted ${insertedCount} logs... (memory efficient, immediate inserts)`);
                 }
+            } catch (error) {
+                console.error(`[Parse] Error inserting batch of ${batch.length} logs:`, error);
+                throw error;
             }
         };
         
@@ -270,45 +262,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         );
         
-        // Insert any remaining pending batches
-        if (pendingBatches.length > 0) {
-            await Promise.all(
-                pendingBatches.map(batchToInsert =>
-                    Promise.all(
-                        batchToInsert.map(log => 
-                            sql`
-                                INSERT INTO logs (
-                                    timestamp, raw_timestamp, level, component, display_component,
-                                    message, display_message, payload, type, is_sip, sip_method,
-                                    file_name, file_color, call_id, report_id, operator_id,
-                                    extension_id, station_id
-                                ) VALUES (
-                                    ${log.timestamp},
-                                    ${log.rawTimestamp || null},
-                                    ${log.level},
-                                    ${log.component || null},
-                                    ${log.displayComponent || null},
-                                    ${log.message},
-                                    ${log.displayMessage || null},
-                                    ${log.payload || null},
-                                    ${log.type || 'LOG'},
-                                    ${log.isSip || false},
-                                    ${log.sipMethod || null},
-                                    ${log.fileName || null},
-                                    ${log.fileColor || null},
-                                    ${log.callId || null},
-                                    ${log.reportId || null},
-                                    ${log.operatorId || null},
-                                    ${log.extensionId || null},
-                                    ${log.stationId || null}
-                                )
-                            `
-                        )
-                    )
-                )
-            );
-            insertedCount += pendingBatches.reduce((sum, b) => sum + b.length, 0);
-        }
+        // No pending batches - batches are inserted immediately as they're created
         
         console.error(`[Parse] Streaming parse complete: ${totalParsed} entries parsed, ${insertedCount} inserted to database`);
 
