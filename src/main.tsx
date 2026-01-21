@@ -4,6 +4,7 @@ import './index.css'
 import App from './App.tsx'
 import ErrorBoundary from './components/ErrorBoundary'
 import { loadServiceMappings } from './utils/messageCleanup'
+import { SpeedInsights } from '@vercel/speed-insights/react'
 
 // Load service mappings before rendering
 loadServiceMappings().then(() => {
@@ -12,6 +13,7 @@ loadServiceMappings().then(() => {
       <ErrorBoundary>
         <App />
       </ErrorBoundary>
+      <SpeedInsights />
     </StrictMode>,
   )
 });
