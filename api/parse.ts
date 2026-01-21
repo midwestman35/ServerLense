@@ -28,24 +28,38 @@ export const config = {
  * 5. Delete blob file immediately after parsing
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+    console.log(`[Parse] Request received: ${req.method} ${req.url}`);
+    
     if (req.method !== 'POST') {
+        console.log(`[Parse] Method not allowed: ${req.method}`);
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
     let blobUrl: string | undefined;
+    let blob: { url: string } | undefined;
 
     try {
+        // Check environment variables
+        const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+        if (!blobToken) {
+            console.error('[Parse] ERROR: BLOB_READ_WRITE_TOKEN not set');
+            return res.status(500).json({ error: 'Server configuration error: Blob storage token missing' });
+        }
+
         // Parse multipart/form-data using formidable
         const form = formidable({
             maxFileSize: 100 * 1024 * 1024, // 100MB
             keepExtensions: true,
         });
 
+        console.log('[Parse] Parsing multipart form data...');
         const [fields, files] = await form.parse(req as any as IncomingMessage);
+        console.log('[Parse] Form data parsed successfully');
         
         // Get the file from parsed form data
         const fileArray = files.file;
         if (!fileArray || fileArray.length === 0) {
+            console.log('[Parse] ERROR: No file provided in request');
             return res.status(400).json({ error: 'No file provided' });
         }
 
@@ -57,9 +71,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const fileSize = file.size || 0;
         const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
+        console.log(`[Parse] Processing file: ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)}MB)`);
+
         if (fileSize > MAX_FILE_SIZE) {
-            return res.status(400).json({ 
-                error: `File too large. Maximum size: ${MAX_FILE_SIZE / 1024 / 1024}MB` 
+            console.error(`[Parse] ERROR: File too large: ${(fileSize / 1024 / 1024).toFixed(2)}MB (max ${MAX_FILE_SIZE / 1024 / 1024}MB)`);
+            return res.status(413).json({ 
+                error: `File too large: ${(fileSize / 1024 / 1024).toFixed(2)}MB. Maximum size is ${MAX_FILE_SIZE / 1024 / 1024}MB.` 
             });
         }
 
@@ -70,25 +87,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Read file from temporary path and upload to Vercel Blob Storage
         const fs = await import('fs/promises');
         const fileBuffer = await fs.readFile(filePath);
+        console.log(`[Parse] File read: ${(fileBuffer.length / 1024 / 1024).toFixed(2)}MB`);
         
         // Upload to Vercel Blob Storage (temporary - for parsing only)
-        // Convert Buffer to ArrayBuffer for Vercel Blob API
-        const arrayBuffer = fileBuffer.buffer.slice(fileBuffer.byteOffset, fileBuffer.byteOffset + fileBuffer.byteLength);
-        const blob = await put(`temp/${Date.now()}-${fileName}`, arrayBuffer, {
-            access: 'public',
-            addRandomSuffix: true,
-            contentType: file.mimetype || 'text/plain',
-        });
-        blobUrl = blob.url;
+        console.log(`[Parse] Uploading to Vercel Blob Storage...`);
+        try {
+            // Convert Buffer to ArrayBuffer for Vercel Blob API
+            const arrayBuffer = fileBuffer.buffer.slice(fileBuffer.byteOffset, fileBuffer.byteOffset + fileBuffer.byteLength);
+            blob = await put(`temp/${Date.now()}-${fileName}`, arrayBuffer, {
+                access: 'public',
+                addRandomSuffix: true,
+                contentType: file.mimetype || 'text/plain',
+            });
+            blobUrl = blob.url;
+            console.log(`[Parse] Blob uploaded successfully: ${blobUrl}`);
+        } catch (blobError: any) {
+            console.error('[Parse] ERROR uploading to Blob Storage:', blobError);
+            console.error('[Parse] Blob error details:', JSON.stringify(blobError, null, 2));
+            if (blobError.statusCode === 403 || blobError.message?.includes('403')) {
+                return res.status(403).json({ 
+                    error: 'Permission denied',
+                    details: 'Failed to upload file to storage. Check BLOB_READ_WRITE_TOKEN environment variable.'
+                });
+            }
+            throw blobError; // Re-throw to be caught by outer catch
+        }
 
         // Parse file from blob URL
+        if (!blob || !blobUrl) {
+            throw new Error('Blob upload failed');
+        }
         console.log(`[Parse] Starting to parse file: ${fileName} (${(fileSize / 1024 / 1024).toFixed(2)}MB)`);
         const logs = await parseLogFile(blob.url, fileName, fileColor);
         console.log(`[Parse] Parsed ${logs.length} log entries, starting database insert...`);
 
         if (logs.length === 0) {
             // Cleanup blob if no logs parsed
-            await del(blob.url).catch(() => {});
+            if (blobUrl) {
+                await del(blobUrl).catch(() => {});
+            }
             return res.status(400).json({ error: 'No logs found in file' });
         }
 
@@ -156,10 +193,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // IMPORTANT: Delete blob file immediately after parsing
         // Files are NOT stored long-term - only parsed logs in Postgres
-        await del(blob.url).catch((err) => {
-            console.error('Failed to delete blob:', err);
-            // Don't fail the request if blob deletion fails
-        });
+        if (blobUrl) {
+            await del(blobUrl).catch((err) => {
+                console.error('Failed to delete blob:', err);
+                // Don't fail the request if blob deletion fails
+            });
+        }
 
         console.log(`[Parse] Successfully inserted ${insertedCount} logs for file: ${fileName}`);
         res.json({
@@ -170,14 +209,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (error: any) {
         // Cleanup blob on error
         if (blobUrl) {
-            await del(blobUrl).catch(() => {
-                // Ignore cleanup errors
+            console.log(`[Parse] Cleaning up blob: ${blobUrl}`);
+            await del(blobUrl).catch((err) => {
+                console.error('[Parse] Failed to delete blob:', err);
             });
         }
 
-        console.error('Parse error:', error);
-        res.status(500).json({
-            error: error.message || 'Failed to parse file',
+        console.error('[Parse] ERROR:', error);
+        console.error('[Parse] Error stack:', error.stack);
+        console.error('[Parse] Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+        
+        // Check for specific error types
+        if (error.statusCode === 403 || error.message?.includes('403') || error.message?.includes('Forbidden')) {
+            return res.status(403).json({
+                error: 'Permission denied',
+                details: error.message || 'Access to blob storage was denied. Check BLOB_READ_WRITE_TOKEN environment variable.',
+            });
+        }
+
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(413).json({
+                error: 'File too large',
+                details: 'File exceeds maximum size limit of 100MB',
+            });
+        }
+
+        return res.status(500).json({
+            error: error.message || 'Failed to parse log file',
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined,
         });
     }
 }
