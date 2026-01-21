@@ -29,10 +29,12 @@ export const config = {
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Log immediately - even before method check
-    console.log(`[Parse] ===== FUNCTION INVOKED =====`);
-    console.log(`[Parse] Request received: ${req.method} ${req.url}`);
-    console.log(`[Parse] Headers:`, JSON.stringify(req.headers, null, 2));
-    console.log(`[Parse] Query:`, JSON.stringify(req.query, null, 2));
+    // Use console.error for immediate flushing in Vercel
+    console.error(`[Parse] ===== FUNCTION INVOKED =====`);
+    console.error(`[Parse] Request received: ${req.method} ${req.url}`);
+    console.error(`[Parse] Timestamp: ${new Date().toISOString()}`);
+    console.error(`[Parse] Headers:`, JSON.stringify(req.headers, null, 2));
+    console.error(`[Parse] Query:`, JSON.stringify(req.query, null, 2));
     
     // Add CORS headers immediately
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -41,12 +43,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     // Handle preflight OPTIONS request
     if (req.method === 'OPTIONS') {
-        console.log(`[Parse] OPTIONS preflight request`);
+        console.error(`[Parse] OPTIONS preflight request`);
         return res.status(200).end();
     }
     
     if (req.method !== 'POST') {
-        console.log(`[Parse] Method not allowed: ${req.method}`);
+        console.error(`[Parse] Method not allowed: ${req.method}`);
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
@@ -73,9 +75,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         
         // Get the file from parsed form data
         const fileArray = files.file;
+        console.error(`[Parse] Files array length: ${fileArray?.length || 0}`);
         if (!fileArray || fileArray.length === 0) {
-            console.log('[Parse] ERROR: No file provided in request');
-            return res.status(400).json({ error: 'No file provided' });
+            console.error('[Parse] ERROR: No file provided in request');
+            const errorResponse = { error: 'No file provided' };
+            console.error('[Parse] Returning 400 error:', JSON.stringify(errorResponse));
+            return res.status(400).json(errorResponse);
         }
 
         const file = fileArray[0];
