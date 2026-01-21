@@ -28,7 +28,22 @@ export const config = {
  * 5. Delete blob file immediately after parsing
  */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+    // Log immediately - even before method check
+    console.log(`[Parse] ===== FUNCTION INVOKED =====`);
     console.log(`[Parse] Request received: ${req.method} ${req.url}`);
+    console.log(`[Parse] Headers:`, JSON.stringify(req.headers, null, 2));
+    console.log(`[Parse] Query:`, JSON.stringify(req.query, null, 2));
+    
+    // Add CORS headers immediately
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    // Handle preflight OPTIONS request
+    if (req.method === 'OPTIONS') {
+        console.log(`[Parse] OPTIONS preflight request`);
+        return res.status(200).end();
+    }
     
     if (req.method !== 'POST') {
         console.log(`[Parse] Method not allowed: ${req.method}`);
