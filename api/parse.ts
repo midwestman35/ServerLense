@@ -107,8 +107,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 return res.status(400).json({ error: 'Invalid blob URL format' });
             }
             
-            // Small delay to ensure blob is available (Vercel Blob might have slight propagation delay)
-            await new Promise(resolve => setTimeout(resolve, 500));
+            // Delay to ensure blob is available (Vercel Blob propagation delay)
+            // For large files, this delay helps but retry logic handles the rest
+            const delay = 1000; // 1 second initial delay
+            console.error(`[Parse] Waiting ${delay}ms before fetching blob...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
             
         } else {
             // Legacy method: multipart/form-data (limited to 4.5MB)

@@ -110,8 +110,12 @@ export async function uploadLogFile(
             
             console.log(`[Client] Sending blob URL to parse endpoint: ${blobUrl.substring(0, 80)}...`);
             
-            // Small delay to ensure blob is fully available (Vercel Blob propagation)
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            // Delay to ensure blob is fully available (Vercel Blob propagation)
+            // For large files (700MB+), use longer delay
+            const fileSizeMB = file.size / (1024 * 1024);
+            const delay = fileSizeMB > 100 ? 3000 : fileSizeMB > 50 ? 2000 : 1000; // 3s for >100MB, 2s for >50MB, 1s otherwise
+            console.log(`[Client] Waiting ${delay}ms for blob propagation (file size: ${fileSizeMB.toFixed(2)}MB)...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
             
             // Step 2: Send blob URL to parse endpoint
             if (onProgress) onProgress(0.7);
