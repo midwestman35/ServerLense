@@ -5,7 +5,6 @@ import App from './App.tsx'
 import ErrorBoundary from './components/ErrorBoundary'
 import { SpeedInsights } from '@vercel/speed-insights/react'
 import { loadServiceMappings } from './utils/messageCleanup'
-import { SpeedInsights } from '@vercel/speed-insights/react'
 
 // Load service mappings before rendering
 loadServiceMappings().then(() => {
